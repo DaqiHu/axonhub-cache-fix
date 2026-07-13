@@ -7,18 +7,18 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const tests = [
-  "test-strip-system.mjs",
-  "test-deepseek-cache.mjs",
-  "test-prefix-hold.mjs",
-  "test-runtime-validation.mjs",
-  "test-pipeline.mjs",
+  ["node", "test-strip-system.mjs"],
+  ["node", "test-deepseek-cache.mjs"],
+  ["node", "test-prefix-hold.mjs"],
+  ["node", "test-runtime-validation.mjs"],
+  ["node", "test-pipeline.mjs"],
+  ["python", "test-cache-report.py"],
 ];
 
-let totalPassed = 0;
 let totalFailed = 0;
 
-for (const test of tests) {
-  const result = spawnSync("node", [join(__dirname, test)], {
+for (const [command, test] of tests) {
+  const result = spawnSync(command, [join(__dirname, test)], {
     stdio: "inherit",
   });
 
