@@ -123,3 +123,21 @@ Extensions must handle both.
 - [#59213](https://github.com/anthropics/claude-code/issues/59213): Tighten cadence of task tools reminder (closed, completed 2026-05-14)
 - [DeepSeek Context Caching docs](https://api-docs.deepseek.com/guides/kv_cache)
 - [DeepSeek Anthropic API docs](https://api-docs.deepseek.com/guides/anthropic_api)
+
+## Finding new patterns
+
+The cache-breaking behaviors we fix originate from Claude Code internals.
+Anthropic does not test against third-party providers. With every Claude Code
+update, new injection patterns may appear.
+
+When a new cache drop pattern emerges:
+
+1. **Search Claude Code issues**: `https://github.com/anthropics/claude-code/issues?q=<keyword>`
+   - Key terms: "prompt cache", "system reminder", "billing header", "context injection"
+2. **Search gists and forums**: GitHub Gist, Reddit r/ClaudeCode, Discord
+3. **Read Claude Code changelogs**: look for new system prompts, auto-injections, or context management changes
+4. **Diff request bodies**: `python scripts/analyze.py` on consecutive requests to find what changed
+5. **Check DeepSeek API docs**: verify caching behavior hasn't changed on their side
+
+When you find a community-reported but unfixed issue (like #64192),
+reference it in the extension code and in [`references/patterns.md`](.agents/skills/extension-dev/references/patterns.md).
