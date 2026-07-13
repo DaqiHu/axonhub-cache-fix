@@ -1,0 +1,24 @@
+# Logs
+*.log
+logs/
+
+# AxonHub runtime
+axonhub.exe
+axonhub.db
+*.db
+
+# Node
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temp
+*.tmp
+*.bak
+test-data/
