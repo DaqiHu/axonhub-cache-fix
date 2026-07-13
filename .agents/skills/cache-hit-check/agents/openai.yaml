@@ -1,0 +1,3 @@
+display_name: Cache Hit Check
+short_description: Query AxonHub DB for DeepSeek prompt cache hit rates
+default_prompt: Use $cache-hit-check to find cache hit rates and identify low-hit requests

@@ -1,0 +1,3 @@
+display_name: Session Analyze
+short_description: Download and compare AxonHub request traces to understand Claude Code patterns
+default_prompt: Use $session-analyze to download and analyze AxonHub request bodies

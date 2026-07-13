@@ -1,0 +1,3 @@
+display_name: Extension Dev
+short_description: Develop, test, and deploy cache-fix proxy extensions for the AxonHub + DeepSeek pipeline
+default_prompt: Use $extension-dev to scaffold, test, and deploy new cache-fix extensions
