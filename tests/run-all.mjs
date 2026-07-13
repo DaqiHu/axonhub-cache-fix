@@ -10,6 +10,7 @@ const tests = [
   "test-strip-system.mjs",
   "test-deepseek-cache.mjs",
   "test-prefix-hold.mjs",
+  "test-runtime-validation.mjs",
   "test-pipeline.mjs",
 ];
 

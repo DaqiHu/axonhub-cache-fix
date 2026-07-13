@@ -2,11 +2,12 @@
 # Copies built-in cache-fix extensions from npm, installs custom ones,
 # and creates the runtime directory structure.
 param(
-  [string]$AxonHubDir = "$env:LOCALAPPDATA\axonhub-cache-fix"
+  [string]$Dir = "$env:USERPROFILE\axonhub"
 )
 
 $ErrorActionPreference = "Stop"
 $RepoDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$NodePath = (Get-Command node -ErrorAction Stop).Source
 
 Write-Host "=== axonhub-cache-fix setup ==="
 
@@ -19,10 +20,10 @@ if (-not (Test-Path $npmRoot)) {
 Write-Host "cache-fix proxy found at $npmRoot"
 
 # 2. Create runtime directory
-$ExtDir = "$AxonHubDir\extensions"
+$ExtDir = "$Dir\extensions"
 New-Item -ItemType Directory -Path $ExtDir -Force | Out-Null
-New-Item -ItemType Directory -Path "$AxonHubDir\logs" -Force | Out-Null
-Write-Host "Runtime dir: $AxonHubDir"
+New-Item -ItemType Directory -Path "$Dir\logs" -Force | Out-Null
+Write-Host "Runtime dir: $Dir"
 
 # 3. Copy built-in extensions from npm
 Write-Host "Copying built-in extensions..."
@@ -37,7 +38,8 @@ $helpers = @(
 )
 foreach ($h in $helpers) {
   if (Test-Path "$npmRoot\$h") {
-    Copy-Item "$npmRoot\$h" $ExtDir -Force
+    Remove-Item "$ExtDir\$h" -Force -ErrorAction SilentlyContinue
+    Copy-Item "$npmRoot\$h" $Dir -Force
   }
 }
 
@@ -48,10 +50,17 @@ Copy-Item "$RepoDir\extensions\*.mjs" $ExtDir -Force
 # 6. Copy extensions config
 Copy-Item "$RepoDir\extensions\extensions.json" $ExtDir -Force
 
+# 7. Validate the generated runtime with cache-fix's real extension loader
+Write-Host "Validating extension runtime..."
+& $NodePath "$RepoDir\scripts\validate-runtime.mjs" --dir $Dir
+if ($LASTEXITCODE -ne 0) {
+  throw "Extension runtime validation failed"
+}
+
 Write-Host ""
 Write-Host "Setup complete."
 Write-Host "  Extensions: $ExtDir"
 Write-Host "  Config:     $ExtDir\extensions.json"
-Write-Host "  Logs:       $AxonHubDir\logs"
+Write-Host "  Logs:       $Dir\logs"
 Write-Host ""
-Write-Host "Next: .\scripts\start.ps1 -AxonHubDir `"$AxonHubDir`""
+Write-Host "Next: .\scripts\start.ps1 -Dir `"$Dir`""

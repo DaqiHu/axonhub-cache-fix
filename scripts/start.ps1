@@ -4,12 +4,23 @@ param(
   [string]$Dir = "$env:USERPROFILE\axonhub"
 )
 
-$NodePath = "C:\Program Files\nodejs\node.exe"
+$RepoDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$NodePath = (Get-Command node -ErrorAction Stop).Source
 $CacheFixServer = "$env:APPDATA\npm\node_modules\claude-code-cache-fix\proxy\server.mjs"
+$RuntimeValidator = "$RepoDir\scripts\validate-runtime.mjs"
+
+function Test-ExtensionRuntime {
+  & $NodePath $RuntimeValidator --dir $Dir
+  return $LASTEXITCODE -eq 0
+}
 
 # --- Status ---
 if ($Status) {
   Write-Host "`n=== Service Status ==="
+  $runtimeValid = Test-ExtensionRuntime
+  if ($runtimeValid) { Write-Host "  cache-fix runtime: VALID" }
+  else { Write-Host "  cache-fix runtime: INVALID" }
+
   $c8090 = netstat -ano | Select-String "LISTENING" | Select-String ":8090\s"
   $c9801 = netstat -ano | Select-String "LISTENING" | Select-String ":9801\s"
 
@@ -34,7 +45,8 @@ if ($Status) {
     }
   }
   Write-Host ""
-  exit 0
+  if ($runtimeValid) { exit 0 }
+  exit 1
 }
 
 # --- Start ---
@@ -61,6 +73,13 @@ Write-Host ""
 if ($NoCacheFix) {
   Write-Host "  cache-fix skipped (-NoCacheFix)."
 } else {
+  if (-not (Test-ExtensionRuntime)) {
+    Write-Host "=== cache-fix ==="
+    Write-Host "  ERROR: extension runtime validation failed"
+    Write-Host "  Run: .\scripts\setup.ps1 -Dir `"$Dir`""
+    exit 1
+  }
+
   if (-not (Test-Path $CacheFixServer)) {
     Write-Host "=== cache-fix ==="
     Write-Host "  ERROR: not found at $CacheFixServer"
