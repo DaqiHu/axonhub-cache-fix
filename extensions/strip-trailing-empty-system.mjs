@@ -6,7 +6,8 @@
 // order 47 — runs after prefix-hold but before cc/cache handling
 
 import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const LOG_DIR = process.env.AXONHUB_CACHE_FIX_LOG_DIR || join(homedir(), ".axonhub-cache-fix", "logs");
 const LOG_PATH = join(LOG_DIR, "strip-trailing-empty-system.log");
@@ -34,11 +35,42 @@ function getSystemContentPreview(msg) {
   return "?";
 }
 
+const TRAILING_NOISE = [
+  ["deferred-tools", "The following deferred tools are now available via ToolSearch."],
+  ["task-tools", "The task tools haven't been used recently."],
+];
+
+function systemText(msg) {
+  const content = msg?.content;
+  let text = "";
+
+  if (typeof content === "string") {
+    text = content;
+  } else if (Array.isArray(content)) {
+    text = content
+      .filter((block) => block?.type === "text" && typeof block.text === "string")
+      .map((block) => block.text)
+      .join("\n");
+  }
+
+  text = text.trim();
+  const wrapped = text.match(/^<system-reminder>\s*([\s\S]*?)\s*<\/system-reminder>\s*$/);
+  return (wrapped ? wrapped[1] : text).trim();
+}
+
+function trailingNoiseRule(msg) {
+  const text = systemText(msg);
+  for (const [rule, prefix] of TRAILING_NOISE) {
+    if (text.startsWith(prefix)) return rule;
+  }
+  return null;
+}
+
 export default {
   name: "strip-empty-system",
   description:
-    "Remove ALL empty system messages (content: []) from the conversation " +
-    "body to keep the cache prefix stable across Claude Code injections",
+    "Remove empty system messages and known trailing Claude Code bookkeeping " +
+    "reminders while preserving meaningful system context",
   order: 47,
 
   async onRequest(ctx) {
@@ -49,8 +81,8 @@ export default {
     let removed = 0;
     let removedWithContent = 0;
 
-    // Remove ALL empty system messages, plus trailing system messages
-    // with content (Claude Code's "task tools" reminder injection)
+    // Remove all empty system messages. Contentful removals are deliberately
+    // limited to known bookkeeping reminders after the latest user message.
     const lastUser = (() => {
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i].role === "user") return i;
@@ -67,14 +99,14 @@ export default {
       if (msg.role !== "system") continue;
 
       const isEmpty = isEmptySystem(msg);
-      const isTrailingContentful = !isEmpty && i > lastUser;
+      const noiseRule = !isEmpty && i > lastUser ? trailingNoiseRule(msg) : null;
 
       if (isEmpty) {
         msgs.splice(i, 1);
         removed++;
-      } else if (isTrailingContentful) {
+      } else if (noiseRule) {
         const preview = getSystemContentPreview(msg);
-        log(`removed contentful system at [${i}]: "${preview}..."`);
+        log(`removed ${noiseRule} system at [${i}]: "${preview}..."`);
         msgs.splice(i, 1);
         removedWithContent++;
       }

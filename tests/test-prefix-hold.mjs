@@ -6,7 +6,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const extPath = join(__dirname, "extensions", "prefix-hold.mjs");
+const extPath = join(__dirname, "..", "extensions", "prefix-hold.mjs");
 const mod = await import(pathToFileURL(extPath).href);
 const ext = mod.default;
 

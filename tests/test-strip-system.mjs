@@ -6,7 +6,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const extPath = join(__dirname, "extensions", "strip-trailing-empty-system.mjs");
+const extPath = join(__dirname, "..", "extensions", "strip-trailing-empty-system.mjs");
 const ext = (await import(pathToFileURL(extPath).href)).default;
 
 let passed = 0;
@@ -48,7 +48,7 @@ await test("removes trailing empty array system", async () => {
 await test("removes contentful trailing array system", async () => {
   const ctx = { body: { model: "x", messages: [
     { role: "user", content: [{ type: "tool_result", content: "5" }] },
-    { role: "system", content: [{ type: "text", text: "task tools reminder..." }] },
+    { role: "system", content: [{ type: "text", text: "The task tools haven't been used recently. Ignore if not applicable." }] },
   ]}};
   await ext.onRequest(ctx);
   assert(ctx.body.messages.length === 1, "removed trailing contentful");
@@ -63,6 +63,42 @@ await test("string-format contentful trailing: removed", async () => {
   ]}};
   await ext.onRequest(ctx);
   assert(ctx.body.messages.length === 1, "string-format removed");
+});
+
+await test("deferred-tools reminder after user: removed", async () => {
+  const ctx = { body: { model: "x", messages: [
+    { role: "user", content: [{ type: "tool_result", content: "2" }] },
+    { role: "system", content: "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded." },
+  ]}};
+  await ext.onRequest(ctx);
+  assert(ctx.body.messages.length === 1, "deferred-tools reminder removed");
+});
+
+await test("wrapped task-tools reminder after user: removed", async () => {
+  const ctx = { body: { model: "x", messages: [
+    { role: "user", content: [{ type: "tool_result", content: "4" }] },
+    { role: "system", content: "<system-reminder>\nThe task tools haven't been used recently. Ignore if not applicable.\n</system-reminder>" },
+  ]}};
+  await ext.onRequest(ctx);
+  assert(ctx.body.messages.length === 1, "wrapped task-tools reminder removed");
+});
+
+await test("SessionStart hook context after user: preserved", async () => {
+  const ctx = { body: { model: "x", messages: [
+    { role: "user", content: [{ type: "text", text: "go" }] },
+    { role: "system", content: "SessionStart hook additional context: keep me" },
+  ]}};
+  await ext.onRequest(ctx);
+  assert(ctx.body.messages.length === 2, "SessionStart context preserved");
+});
+
+await test("unknown contentful system after user: preserved", async () => {
+  const ctx = { body: { model: "x", messages: [
+    { role: "user", content: [{ type: "text", text: "go" }] },
+    { role: "system", content: [{ type: "text", text: "Important hook policy: keep this." }] },
+  ]}};
+  await ext.onRequest(ctx);
+  assert(ctx.body.messages.length === 2, "unknown system content preserved");
 });
 
 await test("empty string system: removed", async () => {

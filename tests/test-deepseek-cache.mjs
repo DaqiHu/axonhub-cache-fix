@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Import the extension module
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const extPath = join(__dirname, "extensions", "deepseek-cache-optimize.mjs");
+const extPath = join(__dirname, "..", "extensions", "deepseek-cache-optimize.mjs");
 const extUrl = pathToFileURL(extPath).href;
 const ext = (await import(extUrl)).default;
 

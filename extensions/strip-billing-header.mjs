@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const LOG_DIR = process.env.AXONHUB_CACHE_FIX_LOG_DIR || join(homedir(), ".axonhub-cache-fix", "logs");
 const LOG_PATH = join(LOG_DIR, "strip-billing-header.log");
