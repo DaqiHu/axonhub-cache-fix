@@ -25,7 +25,22 @@ tail -50 ~/.claude/cache-fix-debug.log
 
 ## Data sources
 
-### 1. AxonHub tracing — most accurate
+### 1. AxonHub SQLite DB — fastest
+`~/axonhub/axonhub.db` stores all request data with cache metrics:
+
+```sql
+-- All recent cache hit rates
+SELECT prompt_tokens, cached_tokens,
+       ROUND(CAST(cached_tokens AS REAL) / prompt_tokens * 100, 1) as hit_pct
+FROM usage_logs ORDER BY created_at DESC LIMIT 10;
+
+-- Find low-hit requests
+SELECT * FROM usage_logs
+WHERE CAST(cached_tokens AS REAL) / prompt_tokens < 0.5
+ORDER BY created_at DESC;
+```
+
+### 2. AxonHub tracing — richest detail
 Open http://localhost:8090 → Tracing → Requests.
 Each request shows the Anthropic-format body and response.
 Response `usage` contains `cache_read_input_tokens` and `input_tokens`.

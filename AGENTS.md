@@ -70,9 +70,13 @@ Key diagnostics:
 ## Cache hit rate investigation
 
 ### Where to find cache data
-1. **AxonHub tracing** → Response body has `usage.cache_read_input_tokens`
-2. **cache-fix debug log** → `~/.claude/cache-fix-debug.log` with `CACHE_FIX_DEBUG=1`
-3. **DeepSeek native response** → `prompt_cache_hit_tokens` in OpenAI-format response
+1. **AxonHub SQLite DB** → `~/axonhub/axonhub.db`, table `usage_logs`:
+   - `prompt_tokens` (col 5) and `cached_tokens` (col 9) give hit rate
+   - `format` (col 18) = `"anthropic/messages"` for Anthropic requests
+   - Query: `SELECT prompt_tokens, cached_tokens FROM usage_logs ORDER BY created_at DESC LIMIT 10`
+2. **request_executions** table → `response_body` JSON has `prompt_tokens_details.cached_tokens`
+3. **AxonHub tracing** → Response body has `usage.cache_read_input_tokens`
+4. **cache-fix debug log** → `~/.claude/cache-fix-debug.log` (requires `CACHE_FIX_DEBUG=1`)
 
 ### Known cache drop patterns
 
