@@ -1,7 +1,7 @@
 param(
   [switch]$NoCacheFix,
   [switch]$Status,
-  [string]$Dir = "$env:LOCALAPPDATA\axonhub-cache-fix"
+  [string]$Dir = "$env:USERPROFILE\axonhub"
 )
 
 $NodePath = "C:\Program Files\nodejs\node.exe"
