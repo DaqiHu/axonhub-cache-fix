@@ -58,7 +58,7 @@ function systemText(msg) {
   return (wrapped ? wrapped[1] : text).trim();
 }
 
-function trailingNoiseRule(msg) {
+function bookkeepingRule(msg) {
   const text = systemText(msg);
   for (const [rule, prefix] of TRAILING_NOISE) {
     if (text.startsWith(prefix)) return rule;
@@ -81,8 +81,8 @@ export default {
     let removed = 0;
     let removedWithContent = 0;
 
-    // Remove all empty system messages. Contentful removals are deliberately
-    // limited to known bookkeeping reminders after the latest user message.
+    // Remove all empty system messages. Known bookkeeping reminders must also
+    // stay removed when Claude Code replays them as historical messages.
     const lastUser = (() => {
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i].role === "user") return i;
@@ -99,7 +99,7 @@ export default {
       if (msg.role !== "system") continue;
 
       const isEmpty = isEmptySystem(msg);
-      const noiseRule = !isEmpty && i > lastUser ? trailingNoiseRule(msg) : null;
+      const noiseRule = !isEmpty ? bookkeepingRule(msg) : null;
 
       if (isEmpty) {
         msgs.splice(i, 1);

@@ -74,6 +74,18 @@ await test("deferred-tools reminder after user: removed", async () => {
   assert(ctx.body.messages.length === 1, "deferred-tools reminder removed");
 });
 
+await test("deferred-tools reminder replayed in history: removed", async () => {
+  const ctx = { body: { model: "x", messages: [
+    { role: "user", content: [{ type: "tool_result", content: "2" }] },
+    { role: "system", content: "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded." },
+    { role: "assistant", content: [{ type: "text", text: "continuing" }] },
+    { role: "user", content: [{ type: "tool_result", content: "3" }] },
+  ]}};
+  await ext.onRequest(ctx);
+  assert(ctx.body.messages.length === 3, "historical deferred-tools reminder removed");
+  assert(ctx.body.messages.every((msg) => msg.role !== "system"), "no reminder remains");
+});
+
 await test("wrapped task-tools reminder after user: removed", async () => {
   const ctx = { body: { model: "x", messages: [
     { role: "user", content: [{ type: "tool_result", content: "4" }] },
