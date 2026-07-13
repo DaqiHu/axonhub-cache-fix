@@ -20,14 +20,14 @@ description: "End-to-end cache hit rate testing loop for axonhub-cache-fix. Use 
 Kill and restart cache-fix without touching AxonHub:
 
 ```powershell
-# Kill cache-fix
-Get-Process -Name node -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -like "*cache-fix*" } |
-  Stop-Process -Force
+# Kill only the cache-fix proxy process
+Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -eq "node.exe" -and $_.CommandLine -like "*claude-code-cache-fix*proxy*server.mjs*" } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
 # Restart (AxonHub already running → auto-skip)
 scripts/start.ps1
-scripts/start.ps1 -Status   # verify extensions: OK
+scripts/start.ps1 -Status   # verify runtime: VALID and /health: ok
 ```
 
 ## Step 2: Run test prompt
@@ -36,7 +36,7 @@ Minimal Claude Code prompt that triggers tool calls with text responses
 (both tool-only and text-output patterns to verify cache handling):
 
 ```bash
-claude -p "连续调6轮tool，尽量节约prompt，用 Bash (echo 1) (echo 2) 直到 6。每轮调用后说一句话。不要用其他工具。"
+claude -p "严格串行执行6次 Bash 工具调用。一次只能调用一个 Bash，命令依次为 echo 1、echo 2、echo 3、echo 4、echo 5、echo 6。每次必须等待该次工具结果返回，然后先输出一句简短中文说明，再发起下一次 Bash。禁止并行调用，禁止在同一轮调用多个工具，不要使用其他工具。"
 ```
 
 This produces alternating tool-call and text-response patterns.
@@ -53,8 +53,8 @@ python -c "
 import sqlite3
 conn = sqlite3.connect(r'C:\Users\hudaq\axonhub\axonhub.db')
 rows = conn.execute('''
-    SELECT id, prompt_tokens, cached_tokens,
-           ROUND(CAST(cached_tokens AS REAL)/prompt_tokens*100,1) as pct,
+    SELECT id, prompt_tokens, prompt_cached_tokens,
+           ROUND(CAST(prompt_cached_tokens AS REAL)/prompt_tokens*100,1) as pct,
            created_at
     FROM usage_logs
     WHERE created_at > datetime('now', '-10 minutes')
@@ -80,8 +80,10 @@ python scripts/cache_report.py
 | Request # | Expected hit rate | Meaning |
 |-----------|-------------------|---------|
 | 1 | 0-30% | Cold start — no cache yet |
-| 2-6 | 99%+ | All subsequent should hit cache |
-| Every ~5th | 25% then recover | System msg injection → strip-empty-system handles it |
+| 2+ | 99%+ | All subsequent should hit cache |
+
+Any request after the first below 99% fails acceptance and must be diagnosed
+from the exact new AxonHub request rows.
 
 If any request after #1 is below 90%, download the request bodies:
 

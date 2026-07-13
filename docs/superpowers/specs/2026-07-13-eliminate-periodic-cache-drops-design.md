@@ -75,9 +75,9 @@ cache-fix 4.2.1's missing-directory health blind spot.
 Keep the existing `strip-empty-system` extension name and order 47, but narrow
 its contentful removal rules.
 
-Always remove empty system messages. Remove a contentful system message only
-when it occurs after the last user message and its normalized text starts with
-one of these exact upstream bookkeeping prefixes:
+Always remove empty system messages. Remove a contentful system message when
+its normalized text starts with one of these exact upstream bookkeeping
+prefixes:
 
 ```text
 The following deferred tools are now available via ToolSearch.
@@ -87,7 +87,8 @@ The task tools haven't been used recently.
 Support both string content and Anthropic text-block arrays, including optional
 `<system-reminder>` wrappers. Preserve all other contentful system messages,
 including SessionStart hook output, project instructions, user hook context,
-and unknown future messages.
+and unknown future messages. The exact reminders remain suppressed when Claude
+Code replays them from the tail into historical positions on later requests.
 
 Every removal is logged with the matched rule and message index. Preserved
 unknown content is not logged on every request to avoid noise.
@@ -115,7 +116,7 @@ Testing uses production modules and follows red-green-refactor.
 
 1. Fix unit-test import paths and first observe the current import failures.
 2. Add targeted system-message tests proving:
-   - both known reminders are removed after the last user message;
+   - both known reminders are removed at first injection and historical replay;
    - wrappers and array/string formats are handled;
    - SessionStart hook output is preserved;
    - arbitrary trailing system content is preserved;
@@ -143,8 +144,8 @@ Acceptance requires:
 
 - the first request may be cold;
 - every subsequent request is at least 99% cache hit;
-- the forwarded AxonHub request bodies contain neither targeted trailing system
-  reminder;
+- the forwarded AxonHub request bodies contain neither standalone targeted
+  system reminder;
 - SessionStart hook context remains present;
 - no extension load failures or pipeline errors appear in stderr;
 - the full automated test suite passes.

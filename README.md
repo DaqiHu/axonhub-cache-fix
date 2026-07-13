@@ -11,13 +11,13 @@ patterns silently destroy prompt cache:
 | # | Pattern | Impact | Issue |
 |---|---------|--------|-------|
 | 1 | `x-anthropic-billing-header` nonce in system prompt | 0% cache | [#68900](https://github.com/anthropics/claude-code/issues/68900) |
-| 2 | `cache_control` fields produce different tokens across requests | cache break | DeepSeek ignores cc but raw JSON differs |
+| 2 | `cache_control` markers move across Claude Code requests | compatibility risk | Current AxonHub removes them during native translation |
 | 3 | Claude Code "eats" user text, replaces with empty `[]` | cache break | conversation restructuring |
-| 4 | "task tools haven't been used recently" injection every ~5 turns | cache break | [#64192](https://github.com/anthropics/claude-code/issues/64192) |
+| 4 | Deferred-tools and task-tools system reminders appear mid-conversation | periodic 13-26% hit | [#64192](https://github.com/anthropics/claude-code/issues/64192) |
 
-DeepSeek uses **full-prefix matching** for cache: any byte diff anywhere
-busts downstream cache. Claude Code's internal restructurings (pattern 2-4)
-happen even on trivial conversations, pushing cache below 25% periodically.
+DeepSeek reuses only complete persisted prefix units. Claude Code's internal
+message restructuring and system-message injection can invalidate the latest
+large prefix unit even during trivial tool-call conversations.
 
 ## Solution
 
@@ -26,7 +26,7 @@ Four cache-fix proxy extensions running at controlled order:
 | Order | Extension | Action |
 |-------|-----------|--------|
 | 46 | `prefix-hold` | Remember & restore last user msg content across requests |
-| 47 | `strip-empty-system` | Delete empty & tail-injected system messages |
+| 47 | `strip-empty-system` | Delete empty messages and two exact bookkeeping reminders |
 | 48 | `deepseek-cache-optimize` | Strip all `cache_control` fields from DeepSeek requests |
 | 85 | `strip-billing-header` | Remove billing header block |
 
@@ -59,9 +59,11 @@ cd axonhub-cache-fix
 .\scripts\start.ps1 -Status
 ```
 
-`setup.ps1` copies built-in cache-fix extensions and helpers from npm to a
-local directory, then places our custom extensions on top. This isolates us
-from `npm update -g claude-code-cache-fix` overwrites.
+`setup.ps1` copies built-in cache-fix extensions and helpers into `~/axonhub`,
+places custom extensions on top, and loads the generated graph with cache-fix's
+real pipeline loader. Setup and start fail if any module cannot load or a
+required custom extension is missing. This also prevents `/health: ok` from
+hiding an empty extension registry.
 
 ## Service Management
 
@@ -94,10 +96,7 @@ Verify with `.\scripts\start.ps1 -Status`.
 ## Test
 
 ```powershell
-node tests\test-deepseek-cache.mjs   # cc stripping (32 tests)
-node tests\test-prefix-hold.mjs      # content stabilization (21 tests)
-node tests\test-strip-system.mjs     # system message removal (15 tests)
-node tests\test-pipeline.mjs         # integration scenarios (28 tests)
+node tests\run-all.mjs               # extensions, runtime layout, pipeline, DB schema
 ```
 
 ## Troubleshooting
@@ -105,7 +104,7 @@ node tests\test-pipeline.mjs         # integration scenarios (28 tests)
 | Symptom | Check |
 |---------|-------|
 | cache-fix won't start | `npm install -g claude-code-cache-fix` then rerun setup |
-| Extensions not loaded | `.\scripts\start.ps1 -Status` — look for DEGRADED |
+| Extensions not loaded | `.\scripts\start.ps1 -Status` — runtime must be `VALID` |
 | Logs not appearing | Verify `~/axonhub/logs/` exists; check permissions |
 | Cache still 0% | Verify billing header stripped: check `http://localhost:8090` tracing |
 | Cache stuck at ~25% | Download request bodies, run `python scripts/analyze.py` |

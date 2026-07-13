@@ -41,6 +41,7 @@ All extensions must:
 2. Add unit tests in `tests/test-<name>.mjs`
 3. Register in `extensions/extensions.json` with order
 4. Run `node tests/run-all.mjs` to verify
+5. Run `scripts/setup.ps1`; runtime validation must report zero load failures
 
 ### Debugging
 - Extension logs: `~/axonhub/logs/*.log`
@@ -71,9 +72,9 @@ Key diagnostics:
 
 ### Where to find cache data
 1. **AxonHub SQLite DB** → `~/axonhub/axonhub.db`, table `usage_logs`:
-   - `prompt_tokens` (col 5) and `cached_tokens` (col 9) give hit rate
+   - `prompt_tokens` and `prompt_cached_tokens` give hit rate
    - `format` (col 18) = `"anthropic/messages"` for Anthropic requests
-   - Query: `SELECT prompt_tokens, cached_tokens FROM usage_logs ORDER BY created_at DESC LIMIT 10`
+   - Query: `SELECT prompt_tokens, prompt_cached_tokens FROM usage_logs ORDER BY created_at DESC LIMIT 10`
 2. **request_executions** table → `response_body` JSON has `prompt_tokens_details.cached_tokens`
 3. **AxonHub tracing** → Response body has `usage.cache_read_input_tokens`
 4. **cache-fix debug log** → `~/.claude/cache-fix-debug.log` (requires `CACHE_FIX_DEBUG=1`)
@@ -83,16 +84,16 @@ Key diagnostics:
 | Symptom | Root cause | Fix extension |
 |---------|-----------|---------------|
 | 0% hit, billing header present | `cch=` nonce changes every request | strip-billing-header |
-| ~25% hit on injection requests | System msg or cc field difference | strip-empty-system + cc-optimize |
+| 13-26% hit on injection requests | Deferred-tools or task-tools system reminder | strip-empty-system |
 | ~82% hit after injection | prefix-hold restored most but some boundary change | prefix-hold (partial) |
 | 99.99% hit | Clean state | — |
 
-### Why some drops are unavoidable
+### Semantic boundary
 DeepSeek creates cache prefix units at "end of user input". Claude Code
-periodically injects system reminders (~every 5 turns). If a meaningful
-system message appears before the last user message, it can't be deleted
-without changing conversation semantics. The 25% → 99% recovery happens
-automatically on the next request.
+periodically injects system reminders. The extension removes only the two
+approved bookkeeping prefixes, including their historical replay on later
+requests. Meaningful or unknown system content must be preserved even when
+that means a cache miss.
 
 ## Conversation patterns observed
 
@@ -101,6 +102,7 @@ automatically on the next request.
 - Tool result: `{role:"user", content:[{type:"tool_result",...}]}`
 - Assistant: `{role:"assistant", content:[{type:"thinking",...},{type:"tool_use",...}]}`
 - Empty system: `{role:"system", content:[]}`
+- Deferred-tools reminder: `{role:"system", content:"The following deferred tools are now available..."}`
 - System reminder: `{role:"system", content:"The task tools haven't been used recently..."}`
 
 ### Content format variations
@@ -110,7 +112,7 @@ Extensions must handle both.
 ## DeepSeek API notes
 
 - Anthropic base URL: `https://api.deepseek.com/anthropic`
-- `cache_control`: **Ignored** (per docs) but JSON field differences still break caching
+- `cache_control`: ignored by DeepSeek; current AxonHub translation removes it from native requests
 - Context caching: automatic, prefix-based, requires **full match** of cache prefix unit
 - Cache prefix units: at end of user input, end of model output, fixed intervals
 - "Cache construction takes seconds" (per docs)

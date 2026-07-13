@@ -1,7 +1,6 @@
-// strip-trailing-empty-system — remove empty system messages injected
-// at the tail of the conversation by Claude Code. These empty [] system
-// blocks shift the "end of user input" position and break DeepSeek's
-// cache prefix matching without adding any semantic value.
+// strip-trailing-empty-system — remove empty system messages and exact
+// Claude Code bookkeeping reminders that break DeepSeek prefix matching.
+// Exact reminders are removed again when Claude Code replays them in history.
 //
 // order 47 — runs after prefix-hold but before cc/cache handling
 
@@ -35,7 +34,7 @@ function getSystemContentPreview(msg) {
   return "?";
 }
 
-const TRAILING_NOISE = [
+const BOOKKEEPING_REMINDERS = [
   ["deferred-tools", "The following deferred tools are now available via ToolSearch."],
   ["task-tools", "The task tools haven't been used recently."],
 ];
@@ -60,7 +59,7 @@ function systemText(msg) {
 
 function bookkeepingRule(msg) {
   const text = systemText(msg);
-  for (const [rule, prefix] of TRAILING_NOISE) {
+  for (const [rule, prefix] of BOOKKEEPING_REMINDERS) {
     if (text.startsWith(prefix)) return rule;
   }
   return null;
@@ -69,7 +68,7 @@ function bookkeepingRule(msg) {
 export default {
   name: "strip-empty-system",
   description:
-    "Remove empty system messages and known trailing Claude Code bookkeeping " +
+    "Remove empty system messages and known Claude Code bookkeeping " +
     "reminders while preserving meaningful system context",
   order: 47,
 
@@ -117,7 +116,7 @@ export default {
     } else if (removed > 0) {
       log(`removed ${removed} empty system msgs`);
     } else if (removedWithContent > 0) {
-      log(`removed ${removedWithContent} trailing contentful system msgs`);
+      log(`removed ${removedWithContent} bookkeeping system msgs`);
     }
   },
 };

@@ -4,7 +4,7 @@
 
 **Goal:** Make the standard six-tool Claude Code session hit DeepSeek cache at 99% or better after the cold request while preserving meaningful system context.
 
-**Architecture:** Build one validated runtime under `~/axonhub`, load the real cache-fix extension graph before startup, and narrowly remove only the two approved trailing bookkeeping reminders. Tests import production modules and exercise generated runtime layout; the final gate is a real Claude Code -> proxy -> AxonHub -> DeepSeek run.
+**Architecture:** Build one validated runtime under `~/axonhub`, load the real cache-fix extension graph before startup, and narrowly remove only the two approved bookkeeping reminders at injection and historical replay. Tests import production modules and exercise generated runtime layout; the final gate is a real Claude Code -> proxy -> AxonHub -> DeepSeek run.
 
 **Tech Stack:** Node.js 24 ESM, PowerShell 7, Python 3 SQLite, cache-fix 4.2.1, AxonHub SQLite traces.
 
@@ -83,13 +83,15 @@ import { homedir } from "node:os";
 In `strip-trailing-empty-system.mjs`, normalize string or text-block content, unwrap an optional `<system-reminder>`, and match only:
 
 ```js
-const TRAILING_NOISE = [
+const BOOKKEEPING_REMINDERS = [
   ["deferred-tools", "The following deferred tools are now available via ToolSearch."],
   ["task-tools", "The task tools haven't been used recently."],
 ];
 ```
 
-Delete a non-empty message only when `i > lastUser` and normalized text starts with one of these prefixes. Log the rule and index.
+Delete a non-empty message when normalized text starts with one of these
+prefixes, including when Claude Code replays it into history. Log the rule and
+index. Preserve all other contentful system messages.
 
 - [ ] **Step 4: Run focused tests and verify GREEN**
 
@@ -291,7 +293,7 @@ Expected: AxonHub PID is unchanged; proxy has a new PID; runtime is `VALID`; `/h
 Record the maximum `usage_logs.id`, run:
 
 ```powershell
-claude -p "连续调6轮tool，尽量节约prompt，用 Bash (echo 1) (echo 2) 直到 6。每轮调用后说一句话。不要用其他工具。"
+claude -p "严格串行执行6次 Bash 工具调用。一次只能调用一个 Bash，命令依次为 echo 1、echo 2、echo 3、echo 4、echo 5、echo 6。每次必须等待该次工具结果返回，然后先输出一句简短中文说明，再发起下一次 Bash。禁止并行调用，禁止在同一轮调用多个工具，不要使用其他工具。"
 ```
 
 Then query only rows above the recorded ID using `prompt_cached_tokens`.
