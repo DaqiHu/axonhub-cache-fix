@@ -1,5 +1,12 @@
 # axonhub-cache-fix development guide
 
+## Prerequisites
+
+- **AxonHub** running on `:8090` (default install: `~/axonhub/axonhub.exe`)
+- **cache-fix proxy** installed globally: `npm install -g claude-code-cache-fix`
+  (default: `%APPDATA%/npm/node_modules/claude-code-cache-fix/`)
+- **Extensions runtime** under `~/axonhub/` (shared with AxonHub; `setup.ps1` populates it)
+
 ## Architecture
 
 ```
@@ -26,7 +33,7 @@ Critical ordering:
 See `scripts/template.mjs` for the standard extension skeleton.
 All extensions must:
 - Export `default { name, description, order, onRequest }`
-- Log changes to a file under `%LOCALAPPDATA%\kanpd\logs\` plus `$AXONHUB_DIR\logs\`
+- Log changes to `$env:AXONHUB_CACHE_FIX_LOG_DIR` (default `~/axonhub/logs/`)
 - Include unit tests in `tests/`
 
 ### Adding an extension
@@ -36,10 +43,9 @@ All extensions must:
 4. Run `node tests/run-all.mjs` to verify
 
 ### Debugging
-- Extension logs: `$AXONHUB_DIR\logs\*.log`
-- cache-fix debug log: `~/.claude/cache-fix-debug.log`
-- Proxy stderr: `$AXONHUB_DIR\cache-fix-stderr.log`
-- Strip log: `$AXONHUB_DIR\logs\strip-billing-header.log`
+- Extension logs: `~/axonhub/logs/*.log`
+- cache-fix debug log: `~/.claude/cache-fix-debug.log` (requires `CACHE_FIX_DEBUG=1`)
+- Proxy stderr: `~/axonhub/logs/cache-fix-stderr.log`
 - AxonHub request traces: `http://localhost:8090` → Tracing tab
 
 ## Testing against real requests

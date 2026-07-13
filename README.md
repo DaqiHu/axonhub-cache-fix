@@ -30,6 +30,17 @@ Four cache-fix proxy extensions running at controlled order:
 | 48 | `deepseek-cache-optimize` | Strip all `cache_control` fields from DeepSeek requests |
 | 85 | `strip-billing-header` | Remove billing header block |
 
+## Prerequisites
+
+| Component | Default location | Install |
+|-----------|-----------------|---------|
+| AxonHub | `~/axonhub/` | Download from [axonhub.com](https://axonhub.com), extract to `~/axonhub/` |
+| cache-fix proxy | `%APPDATA%\npm\node_modules\claude-code-cache-fix\` | `npm install -g claude-code-cache-fix` |
+| Extensions runtime | `~/axonhub/` (shared with AxonHub) | `.\scripts\setup.ps1` |
+
+`~/axonhub/` is both the AxonHub runtime directory and our extension directory.
+Extensions, config, and logs live alongside AxonHub's `axonhub.exe` and `axonhub.db`.
+
 ## Setup
 
 ```powershell
@@ -69,6 +80,16 @@ node tests\test-prefix-hold.mjs      # content stabilization (21 tests)
 node tests\test-strip-system.mjs     # system message removal (15 tests)
 node tests\test-pipeline.mjs         # integration scenarios (28 tests)
 ```
+
+## Troubleshooting
+
+| Symptom | Check |
+|---------|-------|
+| cache-fix won't start | `npm install -g claude-code-cache-fix` then rerun setup |
+| Extensions not loaded | `.\scripts\start.ps1 -Status` — look for DEGRADED |
+| Logs not appearing | Verify `~/axonhub/logs/` exists; check permissions |
+| Cache still 0% | Verify billing header stripped: check `http://localhost:8090` tracing |
+| Cache stuck at ~25% | Download request bodies, run `python scripts/analyze.py` |
 
 ## License
 
