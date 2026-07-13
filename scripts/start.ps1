@@ -46,12 +46,13 @@ if (netstat -ano | Select-String "LISTENING" | Select-String ":8090\s") {
   Write-Host "  Already running on :8090"
 } else {
   Write-Host "  Starting on :8090 ..."
-  $axonhubExe = "$Dir\..\..\axonhub\axonhub.exe"
+  $axonhubExe = "$Dir\axonhub.exe"
   if (Test-Path $axonhubExe) {
-    Start-Process -WindowStyle Hidden -FilePath $axonhubExe -WorkingDirectory (Split-Path $axonhubExe)
+    Start-Process -WindowStyle Hidden -FilePath $axonhubExe -WorkingDirectory $Dir
+    Start-Sleep 2
+    Write-Host "  Dashboard: http://localhost:8090"
   } else {
     Write-Host "  WARNING: AxonHub not found at $axonhubExe"
-    Write-Host "  Make sure AxonHub is running on :8090"
   }
 }
 
