@@ -1,9 +1,6 @@
 ---
 name: cache-hit-check
-description: Query AxonHub cache hit rates from the SQLite database,
-  web UI, or response files. Use when the user asks "check cache",
-  "cache hit rate", "how is caching doing", or wants to monitor
-  DeepSeek prompt cache efficiency.
+description: "Query AxonHub cache hit rates from the SQLite database, web UI, or response files. Use when checking cache, asking about cache hit rate, or monitoring DeepSeek prompt cache efficiency."
 ---
 
 # Cache Hit Check

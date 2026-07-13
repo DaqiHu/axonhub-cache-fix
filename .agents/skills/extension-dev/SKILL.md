@@ -1,9 +1,6 @@
 ---
 name: extension-dev
-description: Develop, test, and deploy cache-fix proxy extensions for the
-  AxonHub + DeepSeek pipeline. Use when adding a new extension, modifying
-  an existing one, or fixing a cache-breaking pattern discovered in
-  Claude Code request traces.
+description: "Develop, test, and deploy cache-fix proxy extensions for the AxonHub + DeepSeek pipeline. Use when adding a new extension, modifying an existing one, or fixing a cache-breaking pattern discovered in Claude Code request traces."
 ---
 
 # Extension Development

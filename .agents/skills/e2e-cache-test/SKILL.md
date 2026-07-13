@@ -1,9 +1,6 @@
 ---
 name: e2e-cache-test
-description: End-to-end cache hit rate testing loop for axonhub-cache-fix.
-  Use when the user wants to test cache performance, verify a fix, run a
-  benchmark, or iterate on extensions. Trigger: "test cache", "run benchmark",
-  "e2e test", "verify cache", "quick test".
+description: "End-to-end cache hit rate testing loop for axonhub-cache-fix. Use when the user wants to test cache performance, verify a fix, run a benchmark, or iterate on extensions. Trigger: test cache, run benchmark, e2e test, verify cache, quick test."
 ---
 
 # End-to-End Cache Test

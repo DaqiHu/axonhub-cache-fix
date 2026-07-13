@@ -1,9 +1,6 @@
 ---
 name: session-analyze
-description: Download and analyze AxonHub request traces to understand
-  Claude Code conversation patterns and cache behavior. Use when the user
-  wants to compare request bodies, find cache-breaking patterns, or
-  understand why specific requests had low cache hit rates.
+description: "Download and analyze AxonHub request traces to understand Claude Code conversation patterns and cache behavior. Use when comparing request bodies, finding cache-breaking patterns, or diagnosing low cache hit rates."
 ---
 
 # Session Analyze

@@ -1,9 +1,6 @@
 ---
 name: cache-hit-debug
-description: Investigate DeepSeek cache hit rate through AxonHub logs
-  and tracing data. Use when cache hit rate drops below 99%, when
-  the user mentions "cache miss", "prompt caching", or wants to
-  understand why a specific request had low cache hit.
+description: "Diagnose DeepSeek cache hit rate drops via AxonHub logs and request traces. Use when cache drops below 99%, or user mentions cache miss or prompt caching issues."
 ---
 
 # Cache Hit Debug
