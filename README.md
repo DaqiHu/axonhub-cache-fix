@@ -72,6 +72,25 @@ from `npm update -g claude-code-cache-fix` overwrites.
 .\scripts\stop.ps1                 # Stop everything
 ```
 
+## Autostart (Windows)
+
+Create a shortcut in the Startup folder to run on login:
+
+```powershell
+$shortcut = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\AxonHub.lnk"
+$shell = New-Object -ComObject WScript.Shell
+$link = $shell.CreateShortcut($shortcut)
+$link.TargetPath = "C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe"
+$link.Arguments = '-WindowStyle Hidden -ExecutionPolicy Bypass -File "<repo>\scripts\start.ps1"'
+$link.WorkingDirectory = "<repo>"
+$link.Save()
+```
+
+Replace `<repo>` with the full path to this repository.
+
+After login, both AxonHub (:8090) and cache-fix (:9801) start silently.
+Verify with `.\scripts\start.ps1 -Status`.
+
 ## Test
 
 ```powershell
