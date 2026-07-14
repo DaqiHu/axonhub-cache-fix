@@ -10,6 +10,7 @@ const tests = [
   ["node", "test-strip-system.mjs"],
   ["node", "test-deepseek-cache.mjs"],
   ["node", "test-prefix-hold.mjs"],
+  ["node", "test-tool-order-hold.mjs"],
   ["node", "test-runtime-validation.mjs"],
   ["node", "test-pipeline.mjs"],
   ["python", "test-cache-report.py"],
