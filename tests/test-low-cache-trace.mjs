@@ -1073,6 +1073,120 @@ await test("streaming with no onResponseStart (status=null) does not write", asy
 });
 
 // ===================================================================
+// Non-message_start stream events
+// ===================================================================
+
+await test("non-message_start events (ping, message_delta) do not trigger writes", async () => {
+  const dir = scratch();
+  const oldGate = process.env.CACHE_FIX_LOW_CACHE_TRACE;
+  const oldDir = process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+  process.env.CACHE_FIX_LOW_CACHE_TRACE = "on";
+  process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = dir;
+  try {
+    const meta = {};
+    await extension.onRequest({
+      body: { model: "test", messages: [] },
+      headers: { "ah-request-id": "non-message-start" },
+      meta,
+    });
+    await extension.onResponseStart({ status: 200, headers: {}, meta });
+
+    // ping event — should be ignored (no message property)
+    await extension.onStreamEvent({
+      event: { type: "ping" },
+      meta,
+    });
+
+    // message_delta event — should be ignored (type mismatch)
+    await extension.onStreamEvent({
+      event: {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 50 },
+      },
+      meta,
+    });
+
+    // message_start event — should write
+    await extension.onStreamEvent({
+      event: {
+        type: "message_start",
+        message: {
+          usage: { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 10 },
+        },
+      },
+      meta,
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const content = readFileSync(join(dir, `${today}.jsonl`), "utf8");
+    const lines = content.trim().split(/\r?\n/);
+    assert.equal(lines.length, 1, "only message_start should produce a record");
+    const record = JSON.parse(lines[0]);
+    assert.equal(record.request_id, "non-message-start");
+  } finally {
+    if (oldGate === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE = oldGate;
+    if (oldDir === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = oldDir;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test("non-message_start events without prior message_start do not leak state", async () => {
+  const dir = scratch();
+  const oldGate = process.env.CACHE_FIX_LOW_CACHE_TRACE;
+  const oldDir = process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+  process.env.CACHE_FIX_LOW_CACHE_TRACE = "on";
+  process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = dir;
+  try {
+    const meta = {};
+    await extension.onRequest({
+      body: { model: "test", messages: [] },
+      headers: { "ah-request-id": "non-msg-start-edge" },
+      meta,
+    });
+    await extension.onResponseStart({ status: 200, headers: {}, meta });
+
+    // Only non-message_start events, no message_start ever arrives
+    await extension.onStreamEvent({ event: { type: "ping" }, meta });
+    await extension.onStreamEvent({
+      event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "hello" } },
+      meta,
+    });
+    await extension.onStreamEvent({
+      event: { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 50 } },
+      meta,
+    });
+
+    // onResponse should also skip (trace.done is false but classifyUsage never ran)
+    // Since trace.done is false and we never classified, onResponse should still fire
+    // But it has valid usage — make sure it writes correctly
+    await extension.onResponse({
+      status: 200,
+      headers: {},
+      body: {
+        usage: { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 10 },
+      },
+      meta,
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const content = readFileSync(join(dir, `${today}.jsonl`), "utf8");
+    const lines = content.trim().split(/\r?\n/);
+    assert.equal(lines.length, 1, "onResponse fallback should produce exactly one record");
+    const record = JSON.parse(lines[0]);
+    assert.equal(record.request_id, "non-msg-start-edge");
+  } finally {
+    if (oldGate === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE = oldGate;
+    if (oldDir === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = oldDir;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ===================================================================
 // Model from ctx.body (onRequest)
 // ===================================================================
 

@@ -56,6 +56,18 @@ try {
     $result = $json | ConvertFrom-Json
     Assert-Equal $result.storage.wal.state "warning" "wal state"
     Assert-Equal (Get-Item "$Scratch\axonhub.db-wal").Length $before "health mutated WAL"
+    Assert-Equal $result.archives.low_cache_requests.state "ok" "archive state without directory"
+    Assert-Equal $result.archives.low_cache_requests.bytes 0 "archive bytes without directory"
+  }
+
+  Test-Case "runtime health JSON reports archive size and state" {
+    New-Item -ItemType Directory -Path "$Scratch\logs\low-cache-requests" -Force | Out-Null
+    Set-Content -LiteralPath "$Scratch\logs\low-cache-requests\2026-07-14.jsonl" -Value ("x" * 500) -NoNewline
+    Set-Content -LiteralPath "$Scratch\logs\low-cache-requests\2026-07-13.jsonl" -Value ("y" * 300) -NoNewline
+    $json = & "$RepoDir\scripts\runtime-health.ps1" -Dir $Scratch -Json -AllowStopped -ArchiveWarningBytes 400 -ArchiveCriticalBytes 1000
+    $result = $json | ConvertFrom-Json
+    Assert-Equal $result.archives.low_cache_requests.bytes 800 "archive bytes wrong"
+    Assert-Equal $result.archives.low_cache_requests.state "warning" "archive state should be warning at 800/400"
   }
 
   Test-Case "cache-fix environment includes low-cache trace defaults" {
