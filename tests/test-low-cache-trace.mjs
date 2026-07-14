@@ -385,6 +385,114 @@ await test("non-streaming once-only capture: onResponse writes once", async () =
 });
 
 // ===================================================================
+// Cross-path once-only (both streaming and non-streaming fire)
+// ===================================================================
+
+await test("cross-path once-only: message_start and onResponse mutually exclusive", async () => {
+  const dir = scratch();
+  const oldGate = process.env.CACHE_FIX_LOW_CACHE_TRACE;
+  const oldDir = process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+  process.env.CACHE_FIX_LOW_CACHE_TRACE = "on";
+  process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = dir;
+  try {
+    const meta = {};
+    await extension.onRequest({
+      body: { model: "claude-sonnet-4", messages: [] },
+      headers: { "ah-request-id": "req-cross" },
+      meta,
+    });
+    await extension.onResponseStart({ status: 200, headers: {}, meta });
+
+    // Streaming path fires first — should write
+    await extension.onStreamEvent({
+      event: {
+        type: "message_start",
+        message: {
+          usage: { input_tokens: 100, cache_creation_input_tokens: 20, cache_read_input_tokens: 30 },
+        },
+      },
+      meta,
+    });
+
+    // Non-streaming path fires second — should NOT write (already done)
+    await extension.onResponse({
+      status: 200,
+      headers: {},
+      body: {
+        usage: { input_tokens: 100, cache_creation_input_tokens: 20, cache_read_input_tokens: 30 },
+      },
+      meta,
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const content = readFileSync(join(dir, `${today}.jsonl`), "utf8");
+    const lines = content.trim().split(/\r?\n/);
+    assert.equal(lines.length, 1, "cross-path: only one record for streaming+non-streaming");
+    const record = JSON.parse(lines[0]);
+    assert.equal(record.request_id, "req-cross");
+    assert.equal(record.hit_pct, 20);
+  } finally {
+    if (oldGate === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE = oldGate;
+    if (oldDir === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = oldDir;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test("cross-path once-only: onResponse first, message_start second", async () => {
+  const dir = scratch();
+  const oldGate = process.env.CACHE_FIX_LOW_CACHE_TRACE;
+  const oldDir = process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+  process.env.CACHE_FIX_LOW_CACHE_TRACE = "on";
+  process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = dir;
+  try {
+    const meta = {};
+    await extension.onRequest({
+      body: { model: "claude-sonnet-4", messages: [] },
+      headers: { "ah-request-id": "req-cross-reverse" },
+      meta,
+    });
+    await extension.onResponseStart({ status: 200, headers: {}, meta });
+
+    // Non-streaming path fires first — should write
+    await extension.onResponse({
+      status: 200,
+      headers: {},
+      body: {
+        usage: { input_tokens: 100, cache_creation_input_tokens: 20, cache_read_input_tokens: 30 },
+      },
+      meta,
+    });
+
+    // Streaming path fires second — should NOT write (already done)
+    await extension.onStreamEvent({
+      event: {
+        type: "message_start",
+        message: {
+          usage: { input_tokens: 200, cache_creation_input_tokens: 40, cache_read_input_tokens: 60 },
+        },
+      },
+      meta,
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const content = readFileSync(join(dir, `${today}.jsonl`), "utf8");
+    const lines = content.trim().split(/\r?\n/);
+    assert.equal(lines.length, 1, "cross-path reverse: only one record");
+    const record = JSON.parse(lines[0]);
+    assert.equal(record.request_id, "req-cross-reverse");
+    assert.equal(record.hit_pct, 20);
+  } finally {
+    if (oldGate === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE = oldGate;
+    if (oldDir === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = oldDir;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ===================================================================
 // Exact body preservation (structuredClone)
 // ===================================================================
 
