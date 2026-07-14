@@ -43,22 +43,6 @@ async function test(name, fn) {
   }
 }
 
-function withEnv(env, fn) {
-  const old = {};
-  for (const [k, v] of Object.entries(env)) {
-    old[k] = process.env[k];
-    process.env[k] = v;
-  }
-  try {
-    fn();
-  } finally {
-    for (const [k, v] of Object.entries(old)) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-  }
-}
-
 // ===================================================================
 // classifyUsage — pure helper tests
 // ===================================================================
