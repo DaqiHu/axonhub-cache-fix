@@ -131,6 +131,15 @@ await test("models isolate order state for one session and agent", async () => {
   assert.deepEqual(names(resultB), ["Edit", "Read", "Bash"]);
 });
 
+await test("delimiter-bearing identifiers do not collide across state tuples", async () => {
+  await run("delimiter", "agent:model-a", ["Bash", "Read"], { model: "model-b" });
+  const distinctTuple = await run("delimiter:agent", "model-a", ["Edit", "Read"], {
+    model: "model-b",
+  });
+
+  assert.deepEqual(names(distinctTuple), ["Edit", "Read"]);
+});
+
 await test("web-search requests do not replace conversation order state", async () => {
   await run("family-isolation", "agent-a", ["Bash", "Read"]);
   const webOnly = await run("family-isolation", "agent-a", ["web_search"]);

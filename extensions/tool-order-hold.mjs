@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const LOG_DIR = process.env.AXONHUB_CACHE_FIX_LOG_DIR
-  || join(homedir(), ".axonhub-cache-fix", "logs");
+  || join(homedir(), "axonhub", "logs");
 const LOG_FILE = "tool-order-hold.log";
 
 function log(msg) {
@@ -28,7 +28,7 @@ function stateKey(ctx, tools) {
   if (!sid) return null;
   const agent = ctx?.headers?.["x-claude-code-agent-id"] || ctx?.meta?._agentId || "main";
   const model = typeof ctx?.body?.model === "string" ? ctx.body.model : "unknown";
-  return `${sid}:${agent}:${model}:${requestFamily(tools)}`;
+  return JSON.stringify([sid, agent, model, requestFamily(tools)]);
 }
 
 function stableToolOrder(tools, previousNames) {
