@@ -16,6 +16,9 @@ python scripts/cache_report.py 60 --summary
 
 The summary is token-weighted:
 `sum(cached_tokens) / sum(prompt_tokens)`. Never average request percentages.
+It uses aggregate SQL and does not scan request bodies, so use it for frequent
+monitoring. `--low-only` loads bounded request bodies only when classification
+is required.
 
 ## Scope controls
 
@@ -57,4 +60,13 @@ python scripts/provider_report.py 30 --after-request-id <watermark> --expect-too
 Without `--expect-tool`, a completed response with no tool call is reported as
 `no-tool-call`, not as incompatibility. The script never sends paid requests.
 
-Service health remains available through `scripts/start.ps1 -Status`.
+Service and storage health are available through either command:
+
+```powershell
+scripts/start.ps1 -Status
+scripts/runtime-health.ps1 -Json
+```
+
+If cache rows disappear while clients receive errors, inspect
+`~/axonhub/logs/upstream-error-bodies.jsonl`; a relayed `SQLITE_BUSY` belongs to
+AxonHub's database layer rather than cache-fix's cache transformations.

@@ -11,12 +11,18 @@ const tests = [
   ["node", "test-deepseek-cache.mjs"],
   ["node", "test-prefix-hold.mjs"],
   ["node", "test-tool-order-hold.mjs"],
+  ["node", "test-upstream-error-body-log.mjs"],
+  ["node", "test-proxy-resilience.mjs"],
   ["node", "test-runtime-validation.mjs"],
   ["node", "test-pipeline.mjs"],
   ["python", "test-cache-report.py"],
   ["python", "test-analyze.py"],
   ["python", "test-provider-report.py"],
+  ["python", "test-sqlite-maintenance.py"],
   ["python", "test-probe-docs.py"],
+  ["powershell.exe", "test-runtime-common.ps1"],
+  ["powershell.exe", "test-service-scripts.ps1"],
+  ["powershell.exe", "test-configure-sqlite.ps1"],
 ];
 
 let totalFailed = 0;

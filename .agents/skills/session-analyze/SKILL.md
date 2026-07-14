@@ -12,6 +12,11 @@ format-correct:
 python scripts/cache_report.py 60 --low-only
 ```
 
+If the client received HTTP 4xx/5xx, correlate the request time with
+`~/axonhub/logs/upstream-error-bodies.jsonl` before diffing successful bodies.
+An AxonHub `SQLITE_BUSY` may prevent a trace/usage row from being committed and
+is not evidence of a cache prefix mutation.
+
 When reproducing, add `--after-request-id <watermark>` so only new rows print
 while pre-watermark lookback still seeds stream state.
 

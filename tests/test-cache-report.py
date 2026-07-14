@@ -170,6 +170,17 @@ def test_default_query_excludes_foreign_models_and_formats():
     assert {row["format"] for row in rows} == {"anthropic/messages"}
 
 
+def test_health_summary_uses_filtered_usage_aggregates():
+    conn = make_detailed_db()
+    summary = cache_report.query_health_summary(conn, 10)
+    assert summary["requests"] == 8
+    assert summary["low_requests"] == 7
+    assert summary["model_pattern"] == "deepseek%"
+    assert summary["format"] == "anthropic/messages"
+    assert summary["prompt_tokens"] == 2500
+    assert summary["cached_tokens"] == 1462
+
+
 def test_query_orders_by_request_creation_and_keeps_lookback_state():
     conn = make_detailed_db()
     messages = [{"role": "user", "content": "old"}]
@@ -343,6 +354,7 @@ if __name__ == "__main__":
         test_unsupported_schema,
         test_detailed_classification_and_weighted_summary,
         test_default_query_excludes_foreign_models_and_formats,
+        test_health_summary_uses_filtered_usage_aggregates,
         test_query_orders_by_request_creation_and_keeps_lookback_state,
         test_appended_system_and_large_growth_are_distinct,
         test_ten_kilobyte_exact_prefix_growth_is_not_called_clean,

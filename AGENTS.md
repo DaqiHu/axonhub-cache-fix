@@ -64,9 +64,44 @@ All extensions must:
 
 ### Debugging
 - Extension logs: `~/axonhub/logs/*.log`
-- cache-fix debug log: `~/.claude/cache-fix-debug.log` (requires `CACHE_FIX_DEBUG=1`)
+- cache-fix debug log: `~/axonhub/logs/cache-fix-debug.log` under the supervisor
 - Proxy stderr: `~/axonhub/logs/cache-fix-stderr.log`
+- Redacted non-2xx bodies: `~/axonhub/logs/upstream-error-bodies.jsonl`
+- Lifecycle/exit codes: `~/axonhub/logs/supervisor.jsonl`
 - AxonHub request traces: `http://localhost:8090` → Tracing tab
+
+Do not assign every relayed HTTP 500 to cache-fix. The proxy owns port 9801 and
+the extension pipeline; AxonHub owns port 8090, provider routing, and SQLite.
+`SQLITE_BUSY` / `database is locked` is an AxonHub storage-layer failure.
+
+## Runtime resilience
+
+- `scripts/start.ps1` launches `scripts/supervise.ps1` by default. The
+  supervisor restarts exited children with bounded backoff and restarts
+  cache-fix only after three consecutive failed health checks.
+- Upstream HTTP 500 responses never trigger a process restart by themselves.
+- `scripts/runtime-health.ps1` reports services, extension validity, WAL/SHM/DB
+  size, and oversized operational logs. Use `-Json` for automation.
+- Runtime logs are bounded and rotated. New debug output must use
+  `CACHE_FIX_DEBUG_LOG`; do not reintroduce the unbounded legacy default.
+- `upstream-error-body-log` records bounded, redacted JSON for non-2xx
+  responses in `upstream-error-bodies.jsonl` and must never mutate a response.
+
+## AxonHub SQLite operations
+
+- SQLite DSNs must retain WAL and foreign-key settings and include
+  `_pragma=busy_timeout(10000)`. Apply through `scripts/configure-sqlite.ps1`,
+  which backs up and validates `config.yml`.
+- `scripts/maintain-db.ps1` is preview-only unless `-Execute` is explicit.
+- Executed maintenance requires both ports 8090 and 9801 stopped, creates a
+  consistent backup, then checkpoints WAL and runs `PRAGMA optimize`.
+- Never perform an online VACUUM. Space reclamation additionally requires the
+  explicit `-Vacuum` flag during an offline maintenance window.
+- Request retention is user-owned AxonHub Storage Policy. It is currently 1 day;
+  cache-fix setup and maintenance scripts must not change or emulate retention.
+- The current AxonHub UI has no supported live backend switch. Never infer that
+  changing `dialect`/`dsn` is a migration; require an upstream-supported
+  export/import procedure and an explicit maintenance plan.
 
 ## Testing against real requests
 
@@ -101,7 +136,9 @@ Key diagnostics:
    - Query: `SELECT prompt_tokens, prompt_cached_tokens FROM usage_logs ORDER BY created_at DESC LIMIT 10`
 2. **request_executions** table → `response_body` JSON has `prompt_tokens_details.cached_tokens`
 3. **AxonHub tracing** → Response body has `usage.cache_read_input_tokens`
-4. **cache-fix debug log** → `~/.claude/cache-fix-debug.log` (requires `CACHE_FIX_DEBUG=1`)
+4. **cache-fix debug log** → `~/axonhub/logs/cache-fix-debug.log`
+5. **Upstream error bodies** → `~/axonhub/logs/upstream-error-bodies.jsonl`:
+   distinguishes AxonHub/provider failures from proxy lifecycle failures
 
 Start with the read-only classified reports:
 
@@ -109,6 +146,9 @@ Start with the read-only classified reports:
 python scripts/cache_report.py 60 --low-only
 python scripts/cache_report.py 60 --summary
 ```
+
+`--summary` uses aggregate token SQL and does not scan request bodies. Prefer it
+for frequent health polling; `--low-only` loads bodies only for classification.
 
 Do not mix models or formats silently. The default filter is `deepseek%` plus
 `anthropic/messages`. Use `--all-models --all-formats` only for an explicit

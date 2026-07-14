@@ -1,26 +1,39 @@
+param([string]$Dir = "$env:USERPROFILE\axonhub")
+
+$RepoDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+. "$RepoDir\scripts\runtime-common.ps1"
 $found = $false
 
-# Find processes by port
-$ports = @(
-  @{ Port = 9801; Name = "cache-fix proxy" }
-  @{ Port = 8090; Name = "AxonHub" }
-)
-
-foreach ($p in $ports) {
-  $conn = netstat -ano | Select-String "LISTENING" | Select-String ":$($p.Port)\s"
-  if ($conn) {
-    $procId = ($conn -split '\s+')[-1]
-    $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
-    if ($proc) {
-      $proc | Stop-Process -Force
-      Write-Host "$($p.Name) (PID $procId) stopped."
-      $found = $true
+$supervisorPath = Join-Path $RepoDir "scripts\supervise.ps1"
+$supervisorPid = Get-SupervisorProcessId -ScriptPath $supervisorPath
+if ($supervisorPid) {
+  $childPids = @(Get-DescendantProcessIds -RootProcessId $supervisorPid)
+  Stop-Process -Id $supervisorPid -Force -ErrorAction SilentlyContinue
+  Write-Host "Supervisor (PID $supervisorPid) stopped."
+  $found = $true
+  Start-Sleep -Milliseconds 500
+  foreach ($childPid in $childPids) {
+    if (Get-Process -Id $childPid -ErrorAction SilentlyContinue) {
+      Stop-Process -Id $childPid -Force -ErrorAction SilentlyContinue
+      Write-Host "Supervisor child (PID $childPid) stopped."
     }
+  }
+} else {
+  Write-Host "Supervisor is not running."
+}
+
+foreach ($service in @(
+  @{ Port = 9801; Name = "cache-fix proxy" },
+  @{ Port = 8090; Name = "AxonHub" }
+)) {
+  $processId = Get-ListeningProcessId -Port $service.Port
+  if ($processId) {
+    Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+    Write-Host "$($service.Name) (PID $processId) stopped."
+    $found = $true
   } else {
-    Write-Host "$($p.Name) is not running."
+    Write-Host "$($service.Name) is not running."
   }
 }
 
-if (-not $found) {
-  Write-Host "No services were running."
-}
+if (-not $found) { Write-Host "No services were running." }

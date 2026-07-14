@@ -18,6 +18,11 @@ Require runtime `VALID`, zero extension load failures, and proxy `/health: ok`.
 Restart only the proxy when deployment requires it; its in-memory state then
 starts from a new baseline.
 
+Also require `scripts/runtime-health.ps1` to show no critical WAL/log condition.
+After a run, inspect `~/axonhub/logs/upstream-error-bodies.jsonl` for new non-2xx
+records. A benchmark with upstream errors is invalid even if later requests
+recover.
+
 ## 2. Record the watermark
 
 ```powershell
@@ -61,4 +66,6 @@ python scripts/analyze.py --dir .\test-data "*Request_*.json"
 
 The before/after report must include request IDs, watermark, model, channel,
 classification, weighted cached/total tokens, uncached-token reduction, and any
-protocol errors. Do not claim improvement from request-count averages.
+protocol or upstream errors. Do not claim improvement from request-count
+averages. For a quick aggregate, `--summary` does not scan request bodies;
+classification still requires the detailed `--low-only` report.

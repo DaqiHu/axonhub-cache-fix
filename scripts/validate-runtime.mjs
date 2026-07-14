@@ -8,6 +8,7 @@ const REQUIRED_EXTENSIONS = [
   "deepseek-cache-optimize",
   "tool-order-hold",
   "strip-billing-header",
+  "upstream-error-body-log",
 ];
 
 async function requirePath(path, label, expectedType) {

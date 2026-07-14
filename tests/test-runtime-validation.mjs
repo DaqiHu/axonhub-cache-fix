@@ -80,6 +80,7 @@ try {
       "deepseek-cache-optimize",
       "tool-order-hold",
       "strip-billing-header",
+      "upstream-error-body-log",
     ]) {
       assert.equal(summary.loaded.includes(name), true, `${name} loaded`);
     }

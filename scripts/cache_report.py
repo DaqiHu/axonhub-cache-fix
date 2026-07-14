@@ -125,6 +125,51 @@ def query_detailed_rows(
     ]
 
 
+def query_health_summary(
+    conn,
+    minutes,
+    model_pattern="deepseek%",
+    request_format="anthropic/messages",
+    after_request_id=None,
+):
+    column = cache_column(conn)
+    filters = ["r.created_at > datetime('now', ?)"]
+    params = [f"-{int(minutes)} minutes"]
+    if model_pattern:
+        filters.append("r.model_id LIKE ?")
+        params.append(model_pattern)
+    if request_format:
+        filters.append("r.format = ?")
+        params.append(request_format)
+    if after_request_id is not None:
+        filters.append("r.id > ?")
+        params.append(int(after_request_id))
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*),
+               SUM(CASE WHEN CAST(u.{column} AS REAL) /
+                    NULLIF(u.prompt_tokens, 0) < 0.9 THEN 1 ELSE 0 END),
+               COALESCE(SUM(u.prompt_tokens), 0),
+               COALESCE(SUM(u.{column}), 0)
+        FROM usage_logs u
+        JOIN requests r ON r.id = u.request_id
+        WHERE {' AND '.join(filters)}
+        """,
+        tuple(params),
+    ).fetchone()
+    prompt = row[2] or 0
+    cached = row[3] or 0
+    return {
+        "requests": row[0] or 0,
+        "low_requests": row[1] or 0,
+        "prompt_tokens": prompt,
+        "cached_tokens": cached,
+        "weighted_pct": cached / prompt * 100 if prompt else 0.0,
+        "model_pattern": model_pattern or "*",
+        "format": request_format or "*",
+    }
+
+
 def _json_object(value):
     if not value:
         return {}
@@ -336,6 +381,18 @@ def print_detailed_report(rows, minutes, low_only=False, summary_only=False):
         )
 
 
+def print_health_summary(summary, minutes):
+    print(
+        f"Scope: model={summary['model_pattern']} format={summary['format']} "
+        f"window={minutes}m"
+    )
+    print(
+        f"requests={summary['requests']} low={summary['low_requests']} "
+        f"weighted={summary['weighted_pct']:.1f}% "
+        f"({summary['cached_tokens']}/{summary['prompt_tokens']})"
+    )
+
+
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("minutes", nargs="?", type=int, default=10)
@@ -360,6 +417,16 @@ def main(argv=None):
     conn = sqlite3.connect(f"file:{args.db.resolve().as_posix()}?mode=ro", uri=True)
     try:
         if request_metadata_available(conn):
+            if args.summary:
+                summary = query_health_summary(
+                    conn,
+                    args.minutes,
+                    model_pattern=None if args.all_models else args.model,
+                    request_format=None if args.all_formats else args.request_format,
+                    after_request_id=args.after_request_id,
+                )
+                print_health_summary(summary, args.minutes)
+                return 0
             rows = query_detailed_rows(
                 conn,
                 args.minutes,
@@ -384,7 +451,7 @@ def main(argv=None):
             rows,
             args.minutes,
             low_only=args.low_only,
-            summary_only=args.summary,
+            summary_only=False,
         )
     else:
         print_report(rows, args.minutes)

@@ -17,11 +17,19 @@ python scripts/analyze.py --dir .\test-data "*Request_*.json"
 user/linter file-change notices, and background-task events are semantic input
 and must be preserved. Unknown formats fail open.
 
+An upstream error is also not an extension candidate until request mutation is
+proven. Use `upstream-error-bodies.jsonl` and `supervisor.jsonl` to separate
+AxonHub/provider failures from proxy exits. `SQLITE_BUSY` belongs to AxonHub's
+SQLite layer.
+
 ## Contract
 
 Every extension exports `default { name, description, order, onRequest }`, logs
 to `$env:AXONHUB_CACHE_FIX_LOG_DIR`, has a focused test in `tests/`, and is
 registered in `extensions/extensions.json`.
+
+Response-observability extensions must be bounded, redact credential-shaped
+keys, fail open, and never mutate the response body or status.
 
 Stateful extensions must:
 

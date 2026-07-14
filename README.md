@@ -116,11 +116,70 @@ hiding an empty extension registry.
 ## Service Management
 
 ```powershell
-.\scripts\start.ps1               # Start AxonHub + proxy (default)
-.\scripts\start.ps1 -NoCacheFix    # Start AxonHub only
-.\scripts\start.ps1 -Status        # Check service & extension health
-.\scripts\stop.ps1                 # Stop everything
+.\scripts\start.ps1                    # Start background supervisor
+.\scripts\start.ps1 -NoCacheFix         # Supervise AxonHub only
+.\scripts\start.ps1 -Once               # One-shot start, no supervision
+.\scripts\start.ps1 -StartupTimeoutSeconds 300  # Allow a long WAL recovery
+.\scripts\start.ps1 -Status             # Service, extension, WAL, and log health
+.\scripts\runtime-health.ps1 -Json      # Machine-readable health snapshot
+.\scripts\stop.ps1                      # Stop supervisor, then both services
 ```
+
+`start.ps1` normally launches `supervise.ps1`. A named mutex prevents duplicate
+supervisors. Missing child processes restart with capped exponential backoff;
+cache-fix is restarted after three consecutive failed `/health` checks. An
+upstream HTTP 500 does not restart cache-fix because it does not indicate a
+proxy process failure.
+
+Runtime lifecycle and child output are retained under `~/axonhub/logs/`:
+
+- `supervisor.jsonl`: starts, exits, exit codes, and health-triggered restarts;
+- `cache-fix-debug.log`: bounded proxy request diagnostics;
+- `upstream-errors.jsonl`: response metadata from the built-in error logger;
+- `upstream-error-bodies.jsonl`: bounded, redacted non-2xx JSON response bodies;
+- `axonhub-*.log` and `cache-fix-*.log`: current child stdout/stderr.
+
+Logs rotate on startup or after reaching their configured size. A historical
+`~/.claude/cache-fix-debug.log` may still exist, but supervised runs write to
+`~/axonhub/logs/cache-fix-debug.log`.
+
+## SQLite Resilience And Maintenance
+
+AxonHub owns `axonhub.db`. A response such as `500 database is locked (5)
+(SQLITE_BUSY)` is therefore an AxonHub storage error, even when cache-fix relays
+it. `setup.ps1` idempotently adds `_pragma=busy_timeout(10000)` to AxonHub's
+SQLite DSN and validates the resulting configuration. Apply it explicitly with:
+
+```powershell
+.\scripts\configure-sqlite.ps1 -Dir "$HOME\axonhub"
+.\scripts\runtime-health.ps1
+```
+
+The timeout lets short writer contention clear; it does not repair an oversized
+database or WAL. Inspect maintenance state without changing the database:
+
+```powershell
+.\scripts\maintain-db.ps1
+```
+
+Actual maintenance is offline and creates a consistent backup first:
+
+```powershell
+.\scripts\stop.ps1
+.\scripts\maintain-db.ps1 -Execute          # checkpoint(TRUNCATE) + optimize
+.\scripts\maintain-db.ps1 -Execute -Vacuum  # explicit slow space reclamation
+.\scripts\start.ps1
+```
+
+Never run an online VACUUM while ports 8090 or 9801 are active. Request
+retention remains an AxonHub Storage Policy setting; this installation is set
+to 1 day and these scripts do not alter or duplicate that policy. Let retention
+cleanup run before considering an offline `-Vacuum`.
+
+The current AxonHub dashboard does not expose a supported live database-backend
+switch. This repository therefore does not rewrite the database dialect or DSN
+to migrate to PostgreSQL; any future backend migration must follow an explicit
+AxonHub-supported export/import procedure and a separate maintenance plan.
 
 ## Autostart (Windows)
 
@@ -148,6 +207,10 @@ node tests\run-all.mjs               # extensions, runtime layout, pipeline, DB 
 python scripts\cache_report.py 60 --low-only  # DeepSeek Anthropic low rows only
 python scripts\cache_report.py 60 --summary   # token-weighted health summary
 ```
+
+`--summary` executes aggregate SQL over token columns and does not scan request
+bodies. Use it for routine monitoring; `--low-only` intentionally loads bounded
+request metadata and bodies because classification needs prefix structure.
 
 By default `cache_report.py` includes only `deepseek%` models in
 `anthropic/messages`, orders by `requests.created_at`, and reads 24 hours of
@@ -250,6 +313,9 @@ without duplicate tools, orphaned tool results, missing tool results, or the
 | Low row is `large-growth` | Verify exact native prefix and measure appended chars/tokens |
 | Miss occurs exactly when tools appear | Check `tool-order-hold.log`; existing tools must keep their prior order and new tools must be appended |
 | Codex says no tools on one provider | Run a deliberate tool probe, then `python scripts/provider_report.py 30 --after-request-id <watermark> --expect-tool`; see [provider compatibility research](docs/research/2026-07-14-codex-additional-tools-provider-compatibility.md) |
+| `500 ... SQLITE_BUSY` | Check `~/axonhub/logs/upstream-error-bodies.jsonl`, then `.\scripts\runtime-health.ps1`; treat it as AxonHub SQLite contention, not a cache-fix crash |
+| cache-fix is stopped after a child exit | Check `supervisor.jsonl` and supervisor stderr; normal `start.ps1` must leave `supervise.ps1` running |
+| WAL remains above the health threshold | Confirm 1 day request retention is taking effect; schedule offline `maintain-db.ps1 -Execute` only if needed |
 
 ## License
 

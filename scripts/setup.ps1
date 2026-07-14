@@ -25,6 +25,11 @@ New-Item -ItemType Directory -Path $ExtDir -Force | Out-Null
 New-Item -ItemType Directory -Path "$Dir\logs" -Force | Out-Null
 Write-Host "Runtime dir: $Dir"
 
+# Keep SQLite writer contention bounded without changing retention policy.
+if (Test-Path "$Dir\config.yml") {
+  & "$RepoDir\scripts\configure-sqlite.ps1" -Dir $Dir
+}
+
 # 3. Copy built-in extensions from npm
 Write-Host "Copying built-in extensions..."
 Copy-Item "$npmRoot\extensions\*.mjs" $ExtDir -Force

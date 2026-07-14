@@ -9,6 +9,7 @@ Find the first changed prefix component before changing an extension.
 
 ```powershell
 scripts/start.ps1 -Status
+scripts/runtime-health.ps1
 python scripts/cache_report.py 60 --low-only
 ```
 
@@ -26,6 +27,13 @@ The default report excludes foreign models and non-Anthropic formats, orders by
 4. Check tools, top-level `system`, overlapping messages, and appended messages
    separately.
 5. Correlate with `~/axonhub/logs/*.log` before proposing a mutation.
+
+When the user reports HTTP errors rather than low-hit rows, check
+`~/axonhub/logs/upstream-error-bodies.jsonl` first. It contains bounded,
+redacted non-2xx JSON bodies. `database is locked` / `SQLITE_BUSY` identifies
+AxonHub SQLite contention; `supervisor.jsonl` and child stderr determine whether
+a process also exited. Do not restart cache-fix merely because AxonHub returned
+HTTP 500.
 
 Downloaded bodies can live anywhere:
 
@@ -63,6 +71,8 @@ Extension logs:
 | `deepseek-cache-optimize.log` | DeepSeek `cache_control` stripping |
 | `strip-billing-header.log` | Billing nonce removal |
 | `tool-order-hold.log` | Tool baselines and reorder events |
+| `upstream-error-bodies.jsonl` | AxonHub/provider error code and message |
+| `supervisor.jsonl` | Child exit code and restart lifecycle |
 
 Never infer root cause from percentage alone. Never strip unknown system text to
 raise a metric.
