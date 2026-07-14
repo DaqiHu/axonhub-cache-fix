@@ -32,6 +32,10 @@ function Get-CacheFixEnvironment {
     CACHE_FIX_UPSTREAM_ERROR_BODY_LOG = "on"
     CACHE_FIX_UPSTREAM_ERROR_BODY_LOG_PATH = (Join-Path $logs "upstream-error-bodies.jsonl")
     AXONHUB_CACHE_FIX_LOG_DIR = $logs
+    CACHE_FIX_LOW_CACHE_TRACE = "on"
+    CACHE_FIX_LOW_CACHE_TRACE_THRESHOLD = "80"
+    CACHE_FIX_LOW_CACHE_TRACE_RETENTION_DAYS = "7"
+    CACHE_FIX_LOW_CACHE_TRACE_DIR = (Join-Path $logs "low-cache-requests")
   }
 }
 

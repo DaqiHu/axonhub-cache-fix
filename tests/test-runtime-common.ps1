@@ -137,6 +137,46 @@ try {
     Assert-Equal (Wait-ManagedProcess -Process $process) 0 "no-args child exit code"
     Assert-Equal ((Get-Content -Raw -LiteralPath $stdout).Trim().Length -gt 0) $true "no stdout"
   }
+
+  Test-Case "directory health aggregates bytes across nested subdirectories" {
+    $dir = Join-Path $Scratch "archive"
+    New-Item -ItemType Directory -Path "$dir\sub1" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$dir\sub2" -Force | Out-Null
+    Set-Content -LiteralPath "$dir\sub1\a.log" -Value ("x" * 100) -NoNewline
+    Set-Content -LiteralPath "$dir\sub1\b.log" -Value ("y" * 200) -NoNewline
+    Set-Content -LiteralPath "$dir\sub2\c.log" -Value ("z" * 300) -NoNewline
+    $result = Get-DirectoryHealth -Path $dir -WarningBytes 1000 -CriticalBytes 2000
+    Assert-Equal $result.Bytes 600 "aggregate bytes wrong"
+    Assert-Equal $result.State "ok" "should be ok below warning"
+  }
+
+  Test-Case "directory health returns 0 bytes and ok for missing directory" {
+    $missing = Join-Path $Scratch "nonexistent"
+    $result = Get-DirectoryHealth -Path $missing -WarningBytes 100 -CriticalBytes 200
+    Assert-Equal $result.Bytes 0 "missing dir bytes wrong"
+    Assert-Equal $result.State "ok" "should be ok for missing dir"
+  }
+
+  Test-Case "directory health reports warning and critical by threshold" {
+    $dir = Join-Path $Scratch "threshold-test"
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    Set-Content -LiteralPath "$dir\data.log" -Value ("x" * 500) -NoNewline
+    $result = Get-DirectoryHealth -Path $dir -WarningBytes 300 -CriticalBytes 800
+    Assert-Equal $result.State "warning" "expected warning"
+    $result2 = Get-DirectoryHealth -Path $dir -WarningBytes 100 -CriticalBytes 400
+    Assert-Equal $result2.State "critical" "expected critical"
+  }
+
+  Test-Case "directory health does not mutate files" {
+    $dir = Join-Path $Scratch "no-mutate"
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    Set-Content -LiteralPath "$dir\a.log" -Value ("x" * 50) -NoNewline
+    Set-Content -LiteralPath "$dir\b.log" -Value ("y" * 50) -NoNewline
+    $before = (Get-ChildItem -LiteralPath $dir -Recurse -File | Measure-Object -Property Length -Sum).Sum
+    $null = Get-DirectoryHealth -Path $dir -WarningBytes 10 -CriticalBytes 20
+    $after = (Get-ChildItem -LiteralPath $dir -Recurse -File | Measure-Object -Property Length -Sum).Sum
+    Assert-Equal $after $before "bytes changed after health check"
+  }
 } finally {
   Remove-Item -LiteralPath $Scratch -Recurse -Force
 }

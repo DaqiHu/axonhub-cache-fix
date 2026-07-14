@@ -4,7 +4,9 @@ param(
   [switch]$AllowStopped,
   [long]$WalWarningBytes = 1GB,
   [long]$WalCriticalBytes = 2GB,
-  [long]$LogWarningBytes = 100MB
+  [long]$LogWarningBytes = 100MB,
+  [long]$ArchiveWarningBytes = 500MB,
+  [long]$ArchiveCriticalBytes = 2GB
 )
 
 $RepoDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -43,6 +45,8 @@ foreach ($path in @(
   $logHealth += Get-FileHealth -Path $path -WarningBytes $LogWarningBytes -CriticalBytes ($LogWarningBytes * 2)
 }
 
+$archiveHealth = Get-DirectoryHealth -Path (Join-Path $Dir "logs\low-cache-requests") -WarningBytes $ArchiveWarningBytes -CriticalBytes $ArchiveCriticalBytes
+
 $result = [ordered]@{
   runtime_valid = $runtimeValid
   services = [ordered]@{
@@ -55,6 +59,9 @@ $result = [ordered]@{
   }
   storage = $storage
   logs = $logHealth
+  archives = [ordered]@{
+    low_cache_requests = $archiveHealth
+  }
 }
 
 if ($Json) {
@@ -67,6 +74,7 @@ if ($Json) {
   foreach ($entry in $storage.GetEnumerator()) {
     Write-Host ("  {0,-10} {1,10:N1} MiB  {2}" -f $entry.Key, ($entry.Value.Bytes / 1MB), $entry.Value.State)
   }
+  Write-Host ("  {0,-10} {1,10:N1} MiB  {2}" -f "archive", ($archiveHealth.Bytes / 1MB), $archiveHealth.State)
   foreach ($entry in $logHealth | Where-Object { $_.State -ne "ok" }) {
     Write-Host ("  log WARN  {0} {1:N1} MiB {2}" -f $entry.Path, ($entry.Bytes / 1MB), $entry.State)
   }

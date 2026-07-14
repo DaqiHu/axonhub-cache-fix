@@ -57,6 +57,14 @@ try {
     Assert-Equal $result.storage.wal.state "warning" "wal state"
     Assert-Equal (Get-Item "$Scratch\axonhub.db-wal").Length $before "health mutated WAL"
   }
+
+  Test-Case "cache-fix environment includes low-cache trace defaults" {
+    $environment = Get-CacheFixEnvironment -Dir $Scratch
+    Assert-Equal $environment.CACHE_FIX_LOW_CACHE_TRACE "on" "trace gate off"
+    Assert-Equal $environment.CACHE_FIX_LOW_CACHE_TRACE_THRESHOLD "80" "wrong threshold"
+    Assert-Equal $environment.CACHE_FIX_LOW_CACHE_TRACE_RETENTION_DAYS "7" "wrong retention"
+    Assert-True ($environment.CACHE_FIX_LOW_CACHE_TRACE_DIR -like "$Scratch\logs\low-cache-requests*") "trace dir outside logs"
+  }
 } finally {
   Remove-Item -LiteralPath $Scratch -Recurse -Force
 }
