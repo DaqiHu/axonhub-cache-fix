@@ -27,5 +27,6 @@
   "upstream-error-log": { "enabled": true, "order": 670 },
   "upstream-error-body-log": { "enabled": true, "order": 675 },
   "request-log": { "enabled": false, "order": 700 },
-  "jsonl-session-mirror": { "enabled": true, "order": 720 }
+  "jsonl-session-mirror": { "enabled": true, "order": 720 },
+  "low-cache-trace": { "enabled": true, "order": 900 }
 }

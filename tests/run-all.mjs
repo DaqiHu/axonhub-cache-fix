@@ -12,6 +12,7 @@ const tests = [
   ["node", "test-prefix-hold.mjs"],
   ["node", "test-tool-order-hold.mjs"],
   ["node", "test-upstream-error-body-log.mjs"],
+  ["node", "test-low-cache-trace.mjs"],
   ["node", "test-proxy-resilience.mjs"],
   ["node", "test-runtime-validation.mjs"],
   ["node", "test-pipeline.mjs"],
