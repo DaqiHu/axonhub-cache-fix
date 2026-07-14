@@ -75,6 +75,27 @@ function Get-RestartDelaySeconds {
   return [int][Math]::Min([Math]::Pow(2, $power), $MaximumSeconds)
 }
 
+function Get-DirectoryHealth {
+  param(
+    [string]$Path,
+    [long]$WarningBytes,
+    [long]$CriticalBytes
+  )
+  $bytes = 0
+  if (Test-Path -LiteralPath $Path) {
+    $sum = (Get-ChildItem -LiteralPath $Path -Recurse -File | Measure-Object -Property Length -Sum).Sum
+    if ($sum) { $bytes = [long]$sum }
+  }
+  $state = if ($bytes -ge $CriticalBytes) {
+    "critical"
+  } elseif ($bytes -ge $WarningBytes) {
+    "warning"
+  } else {
+    "ok"
+  }
+  return [pscustomobject]@{ Path = $Path; Bytes = $bytes; State = $state }
+}
+
 function Get-FileHealth {
   param(
     [string]$Path,
