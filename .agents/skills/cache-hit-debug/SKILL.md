@@ -76,3 +76,12 @@ Extension logs:
 
 Never infer root cause from percentage alone. Never strip unknown system text to
 raise a metric.
+
+## Low-cache request archive
+
+Requests with a hit rate strictly below 80% are recorded to
+`~/axonhub/logs/low-cache-requests/YYYY-MM-DD.jsonl` (UTC daily files) by the
+`low-cache-trace` extension (order 900, gated by `CACHE_FIX_LOW_CACHE_TRACE=on`).
+The archive is fail-open and retains 7 days of records. See README.md for the
+formula, retention variables, inspection commands, and native-translation
+limitation.

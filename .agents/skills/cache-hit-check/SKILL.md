@@ -70,3 +70,12 @@ scripts/runtime-health.ps1 -Json
 If cache rows disappear while clients receive errors, inspect
 `~/axonhub/logs/upstream-error-bodies.jsonl`; a relayed `SQLITE_BUSY` belongs to
 AxonHub's database layer rather than cache-fix's cache transformations.
+
+## Low-cache request archive
+
+Requests with a hit rate strictly below 80% are recorded to
+`~/axonhub/logs/low-cache-requests/YYYY-MM-DD.jsonl` (UTC daily files) by the
+`low-cache-trace` extension (order 900, gated by `CACHE_FIX_LOW_CACHE_TRACE=on`).
+The archive is fail-open and retains 7 days of records. See README.md for the
+formula, retention variables, inspection commands, and native-translation
+limitation.

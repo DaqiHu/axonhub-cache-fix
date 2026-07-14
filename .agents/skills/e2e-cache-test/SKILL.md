@@ -69,3 +69,12 @@ classification, weighted cached/total tokens, uncached-token reduction, and any
 protocol or upstream errors. Do not claim improvement from request-count
 averages. For a quick aggregate, `--summary` does not scan request bodies;
 classification still requires the detailed `--low-only` report.
+
+## Low-cache request archive
+
+Requests with a hit rate strictly below 80% are recorded to
+`~/axonhub/logs/low-cache-requests/YYYY-MM-DD.jsonl` (UTC daily files) by the
+`low-cache-trace` extension (order 900, gated by `CACHE_FIX_LOW_CACHE_TRACE=on`).
+The archive is fail-open and retains 7 days of records. See README.md for the
+formula, retention variables, inspection commands, and native-translation
+limitation.
