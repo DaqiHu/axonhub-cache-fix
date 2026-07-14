@@ -275,7 +275,8 @@ cache_read_input_tokens / (input_tokens + cache_creation_input_tokens + cache_re
 ```
 
 Retention is 7 days; files older than
-`CACHE_FIX_LOW_CACHE_TRACE_RETENTION_DAYS` (default 7) are cleaned on startup.
+`CACHE_FIX_LOW_CACHE_TRACE_RETENTION_DAYS` (default 7) are cleaned automatically
+after each qualifying write, throttled to 60s between sweeps.
 `scripts/runtime-health.ps1` reports the aggregate archive size.
 
 Inspect records by reading the self-contained JSONL directly:

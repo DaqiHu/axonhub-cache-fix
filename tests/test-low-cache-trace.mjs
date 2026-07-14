@@ -357,6 +357,34 @@ await test("buildRecord: uses getThreshold when threshold is not provided", () =
   }
 });
 
+await test("buildRecord: non-finite usage values are coerced to 0 (not NaN or Infinity)", () => {
+  const now = new Date("2026-07-14T12:00:00Z");
+
+  // NaN in input_tokens
+  const r1 = module.buildRecord({
+    usage: { input_tokens: NaN, cache_creation_input_tokens: 0, cache_read_input_tokens: 10 },
+    now, threshold: 80,
+  });
+  assert.equal(r1.usage.input_tokens, 0, "NaN input_tokens coerced to 0");
+  assert.equal(r1.hit_pct, 10 / (0 + 0 + 10) * 100, "hitPct computed with coerced input=0");
+
+  // Infinity in cache_read
+  const r2 = module.buildRecord({
+    usage: { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: Infinity },
+    now, threshold: 80,
+  });
+  assert.equal(r2.usage.cache_read_input_tokens, 0, "Infinity cache_read coerced to 0");
+  assert.equal(r2.hit_pct, 0, "hitPct=0 when cache_read coerced to 0");
+
+  // -Infinity in cache_creation
+  const r3 = module.buildRecord({
+    usage: { input_tokens: 100, cache_creation_input_tokens: -Infinity, cache_read_input_tokens: 10 },
+    now, threshold: 80,
+  });
+  assert.equal(r3.usage.cache_creation_input_tokens, 0, "-Infinity cache_creation coerced to 0");
+  assert.equal(r3.hit_pct, 10 / (100 + 0 + 10) * 100, "hitPct computed with creation=0");
+});
+
 // ===================================================================
 // Streaming once-only capture
 // ===================================================================
@@ -798,6 +826,10 @@ await test("concurrent JSONL validity: all lines valid, count matches, no interl
 // ===================================================================
 
 await test("retentionSweep: deletes files older than retention days", async () => {
+  // Clear any in-flight sweep from previous fire-and-forget appendRecord calls.
+  // The retentionSweep fire-and-forget calls can leave _sweepInFlight=true across
+  // test boundaries, causing this sweep to return early without doing work.
+  module.__resetForTests && module.__resetForTests();
   const dir = scratch();
   try {
     const now = new Date("2026-07-14T12:00:00Z");

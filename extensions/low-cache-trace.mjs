@@ -143,9 +143,9 @@ export function buildRecord({
     agent_id: agentId || null,
     model: model || null,
     usage: {
-      input_tokens: (usage && typeof usage.input_tokens === "number" ? usage.input_tokens : 0),
-      cache_creation_input_tokens: (usage && typeof usage.cache_creation_input_tokens === "number" ? usage.cache_creation_input_tokens : 0),
-      cache_read_input_tokens: (usage && typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0),
+      input_tokens: (usage && typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens) ? usage.input_tokens : 0),
+      cache_creation_input_tokens: (usage && typeof usage.cache_creation_input_tokens === "number" && Number.isFinite(usage.cache_creation_input_tokens) ? usage.cache_creation_input_tokens : 0),
+      cache_read_input_tokens: (usage && typeof usage.cache_read_input_tokens === "number" && Number.isFinite(usage.cache_read_input_tokens) ? usage.cache_read_input_tokens : 0),
     },
     hit_pct: hitPct !== null ? hitPct : null,
     body: body ?? null,
