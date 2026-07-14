@@ -206,6 +206,62 @@ await test("getThreshold: returns default for missing or unparseable values", ()
 });
 
 // ===================================================================
+// getRetentionDays — env-var parsing
+// ===================================================================
+
+await test("getRetentionDays: basic integer values", () => {
+  const key = "CACHE_FIX_LOW_CACHE_TRACE_RETENTION_DAYS";
+  const old = process.env[key];
+  try {
+    process.env[key] = "1";
+    assert.equal(module.getRetentionDays(), 1, "1 should stay 1");
+    process.env[key] = "7";
+    assert.equal(module.getRetentionDays(), 7, "7 should stay 7");
+    process.env[key] = "30";
+    assert.equal(module.getRetentionDays(), 30, "30 should stay 30");
+  } finally {
+    if (old === undefined) delete process.env[key];
+    else process.env[key] = old;
+  }
+});
+
+await test("getRetentionDays: floors fractional values", () => {
+  const key = "CACHE_FIX_LOW_CACHE_TRACE_RETENTION_DAYS";
+  const old = process.env[key];
+  try {
+    process.env[key] = "7.9";
+    assert.equal(module.getRetentionDays(), 7, "7.9 should floor to 7");
+    process.env[key] = "1.1";
+    assert.equal(module.getRetentionDays(), 1, "1.1 should floor to 1");
+    process.env[key] = "0.9";
+    assert.equal(module.getRetentionDays(), 7, "0.9 is below minimum 1, should default to 7");
+  } finally {
+    if (old === undefined) delete process.env[key];
+    else process.env[key] = old;
+  }
+});
+
+await test("getRetentionDays: returns default for missing, empty, NaN, or below-minimum values", () => {
+  const key = "CACHE_FIX_LOW_CACHE_TRACE_RETENTION_DAYS";
+  const old = process.env[key];
+  try {
+    delete process.env[key];
+    assert.equal(module.getRetentionDays(), 7, "missing should default to 7");
+    process.env[key] = "";
+    assert.equal(module.getRetentionDays(), 7, "empty should default to 7");
+    process.env[key] = "not-a-number";
+    assert.equal(module.getRetentionDays(), 7, "NaN should default to 7");
+    process.env[key] = "0";
+    assert.equal(module.getRetentionDays(), 7, "0 below minimum 1 should default to 7");
+    process.env[key] = "-1";
+    assert.equal(module.getRetentionDays(), 7, "negative should default to 7");
+  } finally {
+    if (old === undefined) delete process.env[key];
+    else process.env[key] = old;
+  }
+});
+
+// ===================================================================
 // buildRecord — pure helper tests
 // ===================================================================
 
@@ -712,12 +768,19 @@ await test("concurrent JSONL validity: all lines valid, count matches, no interl
     const lines = content.trim().split(/\r?\n/);
     assert.equal(lines.length, N, `expected ${N} JSONL lines, got ${lines.length}`);
 
-    // Verify every line is valid JSON with expected fields
+    // Verify every line is valid JSON with expected fields and distinct IDs
+    const seenIds = new Set();
     for (let i = 0; i < lines.length; i++) {
       const parsed = JSON.parse(lines[i]);
       assert.equal(parsed.schema_version, 1, `line ${i} has schema_version`);
       assert.ok(typeof parsed.hit_pct === "number", `line ${i} has hit_pct`);
       assert.ok(parsed.body, `line ${i} has body`);
+      assert.ok(parsed.request_id, `line ${i} has request_id`);
+      seenIds.add(parsed.request_id);
+    }
+    assert.equal(seenIds.size, N, `expected ${N} distinct IDs, got ${seenIds.size}`);
+    for (let i = 0; i < N; i++) {
+      assert.ok(seenIds.has(`concurrent-${i}`), `missing concurrent-${i}`);
     }
   } finally {
     if (oldGate === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE;
@@ -890,13 +953,31 @@ await test("fail-open: write errors do not throw to caller", async () => {
   }
 });
 
-await test("fail-open: gate off does not fail", () => {
-  // When gate is not "on", hooks should return early without throwing
+await test("fail-open: all hooks return harmlessly when gate is off", async () => {
+  // When gate is not "on", every hook should return early without throwing
   // (CACHE_FIX_LOW_CACHE_TRACE is not set)
   const meta = {};
-  return extension.onRequest({
+  await extension.onRequest({
     body: { model: "test", messages: [] },
     headers: {},
+    meta,
+  });
+  await extension.onResponseStart({ status: 200, headers: {}, meta });
+  await extension.onStreamEvent({
+    event: {
+      type: "message_start",
+      message: {
+        usage: { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 10 },
+      },
+    },
+    meta,
+  });
+  await extension.onResponse({
+    status: 200,
+    headers: {},
+    body: {
+      usage: { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 10 },
+    },
     meta,
   });
 });

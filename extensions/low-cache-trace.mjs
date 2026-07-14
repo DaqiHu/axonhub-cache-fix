@@ -65,7 +65,7 @@ export function getThreshold() {
   return Number.isFinite(n) ? Math.round(n) : DEFAULT_THRESHOLD;
 }
 
-function getRetentionDays() {
+export function getRetentionDays() {
   const raw = process.env[ENV_RETENTION_DAYS];
   if (raw === undefined || raw === "") return DEFAULT_RETENTION_DAYS;
   const n = Number(raw);
