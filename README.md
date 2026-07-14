@@ -161,6 +161,25 @@ Category summaries use `sum(prompt_cached_tokens) / sum(prompt_tokens)`, not an
 unweighted average of per-request percentages. On older AxonHub schemas the
 script falls back to the original basic report.
 
+### Measured dynamic-tool benchmark
+
+On 2026-07-14, two fresh `claude -p --model deepseek-v4-flash` sessions used
+equal-length system markers and the same serial workload: Bash, ToolSearch,
+then WebFetch. The disabled run inserted `WebFetch` before `Workflow`; the
+enabled run appended it after the established tool order.
+
+| Measurement | Extension disabled | Extension enabled | Reduction |
+|-------------|-------------------:|------------------:|----------:|
+| Dynamic transition uncached tokens | 32,211 | 27,023 | 5,188 (16.1%) |
+| Whole session uncached tokens | 71,905 | 66,909 | 4,996 (6.9%) |
+| Dynamic transition cache hit | 19.0% | 32.1% | +13.1 points |
+
+Both runs completed four model turns. A separate three-Bash stable-tool run
+produced one expected cold request followed by 99.9%, 99.7%, and 99.8% hits.
+Across the before, after, and stable sessions, all 14 traced requests completed
+without duplicate tools, orphaned tool results, missing tool results, or the
+`tool_calls`/`tool_call_id` 400 error.
+
 ## Troubleshooting
 
 | Symptom | Check |
