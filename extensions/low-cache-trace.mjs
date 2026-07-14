@@ -223,8 +223,9 @@ function serialize(fn) {
   return _writeQueue;
 }
 
-async function appendRecord(record) {
-  const path = archivePath(new Date());
+async function appendRecord(record, now) {
+  const dt = now || new Date();
+  const path = archivePath(dt);
   await serialize(async () => {
     const dir = logDir();
     await mkdir(dir, { recursive: true }).catch(() => {});
@@ -306,6 +307,7 @@ export default {
       if (!shouldRecord) return;
 
       trace.done = true;
+      const now = new Date();
       const record = buildRecord({
         status,
         requestId: trace.requestId,
@@ -314,9 +316,9 @@ export default {
         model: trace.model,
         usage,
         body: trace.body,
-        now: new Date(),
+        now,
       });
-      await appendRecord(record);
+      await appendRecord(record, now);
     } catch {
       // fail-open
     }
@@ -340,6 +342,7 @@ export default {
       if (!shouldRecord) return;
 
       trace.done = true;
+      const now = new Date();
       const record = buildRecord({
         status,
         requestId: trace.requestId,
@@ -348,21 +351,17 @@ export default {
         model: trace.model,
         usage,
         body: trace.body,
-        now: new Date(),
+        now,
       });
-      await appendRecord(record);
+      await appendRecord(record, now);
     } catch {
       // fail-open
     }
   },
 
-  // Test-only: reset module-level state between test runs.
-  __resetForTests() {
-    __resetForTests();
-  },
 };
 
-// Standalone named export so tests can call module.__resetForTests() directly.
+// Tests call module.__resetForTests() to reset module-level state.
 export function __resetForTests() {
   _writeQueue = Promise.resolve();
   _lastSweepMs = 0;

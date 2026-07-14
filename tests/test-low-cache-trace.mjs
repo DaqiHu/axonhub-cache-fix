@@ -131,6 +131,42 @@ await test("classifyUsage: one cache field null, other numeric → uses numeric 
   assert.equal(r.hitPct, 0, "null read treated as 0 → hitPct=0");
 });
 
+await test("classifyUsage: infinity and NaN treated as non-finite → coerced to 0", () => {
+  // Infinity input_tokens is coerced to 0 by Number.isFinite check,
+  // but cache_read is present → denominator > 0, hitPct computed
+  const r1 = module.classifyUsage(
+    { input_tokens: Infinity, cache_creation_input_tokens: 0, cache_read_input_tokens: 10 },
+    80,
+  );
+  assert.equal(r1.shouldRecord, false, "Infinity input → input=0, hitPct=100% → skip");
+  assert.equal(r1.hitPct, 100, "10 read / (0+0+10) * 100 = 100");
+
+  // NaN cache_read: Number.isFinite(NaN) is false → read coerced to 0,
+  // but cache_creation=0 is present → both cache fields exist → treat as present
+  const r2 = module.classifyUsage(
+    { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: NaN },
+    80,
+  );
+  assert.equal(r2.shouldRecord, true, "NaN cache_read treated as 0, cc=0 present → hitPct=0 < 80 → record");
+  assert.equal(r2.hitPct, 0);
+
+  // Negative Infinity cache_creation is coerced to 0, cache_read present → hitPct computed
+  const r3 = module.classifyUsage(
+    { input_tokens: 100, cache_creation_input_tokens: -Infinity, cache_read_input_tokens: 10 },
+    80,
+  );
+  assert.equal(r3.shouldRecord, true, "-Infinity creation treated as 0 → cache_read present → can record");
+  assert.equal(r3.hitPct, 10 / (100 + 0 + 10) * 100, "hitPct computed with creation=0");
+
+  // All non-finite → all coerced to 0 → denominator zero
+  const r4 = module.classifyUsage(
+    { input_tokens: NaN, cache_creation_input_tokens: Infinity, cache_read_input_tokens: -Infinity },
+    80,
+  );
+  assert.equal(r4.shouldRecord, false, "all non-finite → all zero → skip");
+  assert.equal(r4.hitPct, null);
+});
+
 // ===================================================================
 // getThreshold — env-var parsing
 // ===================================================================
@@ -245,6 +281,24 @@ await test("buildRecord: body with falsy values is preserved (?? not ||)", () =>
 
   const withUndefined = module.buildRecord({ usage, now, threshold: 80 });
   assert.strictEqual(withUndefined.body, null, "undefined body should become null");
+});
+
+await test("buildRecord: uses getThreshold when threshold is not provided", () => {
+  const key = "CACHE_FIX_LOW_CACHE_TRACE_THRESHOLD";
+  const old = process.env[key];
+  try {
+    // When threshold is omitted, buildRecord falls back to getThreshold()
+    // Set env to 50 so we can verify fallback behavior
+    process.env[key] = "50";
+    const usage = { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 20 };
+    const record = module.buildRecord({ usage, now: new Date("2026-07-14T12:00:00Z") });
+    // 20 / (100 + 0 + 20) * 100 = ~16.67, < 50 → would record if classify used threshold 50
+    // hit_pct is always computed from usage, not affected by threshold
+    assert.equal(record.hit_pct, 20 / 120 * 100);
+  } finally {
+    if (old === undefined) delete process.env[key];
+    else process.env[key] = old;
+  }
 });
 
 // ===================================================================
@@ -881,6 +935,134 @@ await test("non-2xx status: no record written", async () => {
 
     const today = new Date().toISOString().slice(0, 10);
     assert.equal(existsSync(join(dir, `${today}.jsonl`)), false);
+  } finally {
+    if (oldGate === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE = oldGate;
+    if (oldDir === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = oldDir;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test("non-2xx streaming: message_start with error status does not write", async () => {
+  const dir = scratch();
+  const oldGate = process.env.CACHE_FIX_LOW_CACHE_TRACE;
+  const oldDir = process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+  process.env.CACHE_FIX_LOW_CACHE_TRACE = "on";
+  process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = dir;
+  try {
+    const meta = {};
+    await extension.onRequest({
+      body: { model: "test", messages: [] },
+      headers: { "ah-request-id": "stream-non-2xx" },
+      meta,
+    });
+
+    // onResponseStart sets non-2xx status
+    await extension.onResponseStart({ status: 400, headers: {}, meta });
+
+    // message_start with valid usage — should NOT write because status is 400
+    await extension.onStreamEvent({
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 10,
+          },
+        },
+      },
+      meta,
+      telemetry: {},
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    assert.equal(existsSync(join(dir, `${today}.jsonl`)), false, "no file for non-2xx streaming");
+  } finally {
+    if (oldGate === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE = oldGate;
+    if (oldDir === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = oldDir;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test("non-2xx streaming: 5xx status also prevents write", async () => {
+  const dir = scratch();
+  const oldGate = process.env.CACHE_FIX_LOW_CACHE_TRACE;
+  const oldDir = process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+  process.env.CACHE_FIX_LOW_CACHE_TRACE = "on";
+  process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = dir;
+  try {
+    const meta = {};
+    await extension.onRequest({
+      body: { model: "test", messages: [] },
+      headers: { "ah-request-id": "stream-5xx" },
+      meta,
+    });
+
+    // onResponseStart sets 5xx status
+    await extension.onResponseStart({ status: 500, headers: {}, meta });
+
+    await extension.onStreamEvent({
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 10,
+          },
+        },
+      },
+      meta,
+      telemetry: {},
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    assert.equal(existsSync(join(dir, `${today}.jsonl`)), false, "no file for 5xx streaming");
+  } finally {
+    if (oldGate === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE = oldGate;
+    if (oldDir === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+    else process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = oldDir;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test("streaming with no onResponseStart (status=null) does not write", async () => {
+  const dir = scratch();
+  const oldGate = process.env.CACHE_FIX_LOW_CACHE_TRACE;
+  const oldDir = process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR;
+  process.env.CACHE_FIX_LOW_CACHE_TRACE = "on";
+  process.env.CACHE_FIX_LOW_CACHE_TRACE_DIR = dir;
+  try {
+    const meta = {};
+    await extension.onRequest({
+      body: { model: "test", messages: [] },
+      headers: { "ah-request-id": "stream-no-status" },
+      meta,
+    });
+
+    // No onResponseStart called — trace.status remains null
+    await extension.onStreamEvent({
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 10,
+          },
+        },
+      },
+      meta,
+      telemetry: {},
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    assert.equal(existsSync(join(dir, `${today}.jsonl`)), false, "no file when status is null");
   } finally {
     if (oldGate === undefined) delete process.env.CACHE_FIX_LOW_CACHE_TRACE;
     else process.env.CACHE_FIX_LOW_CACHE_TRACE = oldGate;

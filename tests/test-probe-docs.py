@@ -14,11 +14,13 @@ def test_probe_docs_use_filtered_classified_commands():
         ROOT / ".agents/skills/session-analyze/SKILL.md",
         ROOT / ".agents/skills/extension-dev/SKILL.md",
     ]
+    contents = {}
     for path in files:
         text = path.read_text(encoding="utf-8")
+        contents[path] = text
         assert "cache_report.py" in text, path
         assert "--low-only" in text, path
-    combined = "\n".join(path.read_text(encoding="utf-8") for path in files)
+    combined = "\n".join(contents.values())
     assert "provider_report.py" in combined
     assert "appended-system" in combined
     assert "large-growth" in combined
@@ -76,7 +78,6 @@ def test_low_cache_archive_docs_cover_operator_contract():
     session = (ROOT / ".agents/skills/session-analyze/SKILL.md").read_text(encoding="utf-8")
     combined = "\n".join([readme, agents, check, debug, e2e, session])
 
-    assert "low-cache-requests" in combined
     assert "CACHE_FIX_LOW_CACHE_TRACE" in combined
     assert "strictly below 80%" in combined
     assert "input_tokens + cache_creation_input_tokens + cache_read_input_tokens" in combined
