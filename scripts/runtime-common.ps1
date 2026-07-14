@@ -84,6 +84,7 @@ function Get-DirectoryHealth {
   $bytes = 0
   if (Test-Path -LiteralPath $Path) {
     $sum = (Get-ChildItem -LiteralPath $Path -Recurse -File | Measure-Object -Property Length -Sum).Sum
+    # Measure-Object -Sum returns $null for empty collections; guard keeps $bytes=0
     if ($sum) { $bytes = [long]$sum }
   }
   $state = if ($bytes -ge $CriticalBytes) {

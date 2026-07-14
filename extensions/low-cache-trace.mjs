@@ -58,11 +58,11 @@ function archivePath(now) {
   return join(logDir(), `${ymd}.jsonl`);
 }
 
-function getThreshold() {
+export function getThreshold() {
   const raw = process.env[ENV_THRESHOLD];
   if (raw === undefined || raw === "") return DEFAULT_THRESHOLD;
   const n = Number(raw);
-  return Number.isFinite(n) ? Math.floor(n) : DEFAULT_THRESHOLD;
+  return Number.isFinite(n) ? Math.round(n) : DEFAULT_THRESHOLD;
 }
 
 function getRetentionDays() {
@@ -91,8 +91,8 @@ export function classifyUsage(usage, threshold) {
   const cc = usage.cache_creation_input_tokens;
   const it = usage.input_tokens;
 
-  // Both cache fields absent → skip (treat as "unknown usage")
-  if (cr === undefined && cc === undefined) {
+  // Both cache fields absent (undefined or null) → skip
+  if ((cr === undefined || cr === null) && (cc === undefined || cc === null)) {
     return { hitPct: null, shouldRecord: false };
   }
 
@@ -148,7 +148,7 @@ export function buildRecord({
       cache_read_input_tokens: (usage && typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0),
     },
     hit_pct: hitPct !== null ? hitPct : null,
-    body: body || null,
+    body: body ?? null,
   };
 }
 
@@ -223,8 +223,9 @@ function serialize(fn) {
   return _writeQueue;
 }
 
-async function appendRecord(record) {
-  const path = archivePath(new Date());
+async function appendRecord(record, now) {
+  const dt = now || new Date();
+  const path = archivePath(dt);
   await serialize(async () => {
     const dir = logDir();
     await mkdir(dir, { recursive: true }).catch(() => {});
@@ -306,6 +307,7 @@ export default {
       if (!shouldRecord) return;
 
       trace.done = true;
+      const now = new Date();
       const record = buildRecord({
         status,
         requestId: trace.requestId,
@@ -314,9 +316,9 @@ export default {
         model: trace.model,
         usage,
         body: trace.body,
-        now: new Date(),
+        now,
       });
-      await appendRecord(record);
+      await appendRecord(record, now);
     } catch {
       // fail-open
     }
@@ -340,6 +342,7 @@ export default {
       if (!shouldRecord) return;
 
       trace.done = true;
+      const now = new Date();
       const record = buildRecord({
         status,
         requestId: trace.requestId,
@@ -348,21 +351,17 @@ export default {
         model: trace.model,
         usage,
         body: trace.body,
-        now: new Date(),
+        now,
       });
-      await appendRecord(record);
+      await appendRecord(record, now);
     } catch {
       // fail-open
     }
   },
 
-  // Test-only: reset module-level state between test runs.
-  __resetForTests() {
-    __resetForTests();
-  },
 };
 
-// Standalone named export so tests can call module.__resetForTests() directly.
+// Tests call module.__resetForTests() to reset module-level state.
 export function __resetForTests() {
   _writeQueue = Promise.resolve();
   _lastSweepMs = 0;
