@@ -27,6 +27,10 @@ Critical ordering:
 - **46-48**: Content stabilization (prefix-hold, strip-empty-system, cc-strip)
   Must run BEFORE cache-control removal so they see original cc positions.
 - **85**: Billing header removal (can run after cc strip)
+- **200-250**: Tool stabilization. Built-in alphabetical sorting runs at 200,
+  `tool-order-hold` runs at 210, and fresh-session sorting runs at 250.
+  Dynamic-tool order holding must see deterministic current input but run before
+  later prompt normalization.
 
 ### Extension template
 
@@ -45,6 +49,11 @@ All extensions must:
   following user `tool_result.tool_use_id`.
 - Add concurrent-agent and changed-tool-ID regression tests for any extension
   that stores message content across requests.
+- Tool-order state must additionally include model and request family. Exact
+  one-tool `web_search` requests are a separate family from conversations.
+- A tool-order extension may reorder only tool objects present in the current
+  request. Never add a remembered tool, retain a removed tool, or replace the
+  current definition with a stored definition.
 
 ### Adding an extension
 1. Create `extensions/<name>.mjs` with the template
@@ -77,6 +86,8 @@ Key diagnostics:
 - `trailing_sys=0` confirms system message removal
 - `first_msg=None` means all overlapping msgs byte-identical
 - `first_byte=X%` shows prefix match percentage
+- `python scripts/cache_report.py` separates expected cold/search rows from
+  `tools-changed`, `system-changed`, and `history-changed` prefix mutations.
 
 ## Cache hit rate investigation
 
@@ -96,7 +107,13 @@ Key diagnostics:
 | 0% hit, billing header present | `cch=` nonce changes every request | strip-billing-header |
 | 13-26% hit on injection requests | Deferred-tools or task-tools system reminder | strip-empty-system |
 | ~82% hit after injection | prefix-hold restored most but some boundary change | prefix-hold (partial) |
+| 1-9% exactly when tools appear | Existing tools moved after full-array sort | tool-order-hold |
 | 99.99% hit | Clean state | — |
+
+Do not infer a root cause from hit percentage alone. Use the classified report
+and inspect adjacent request bodies. `standalone-web-search`, `cold-first`, and
+large `clean-growth` rows are not automatically extension failures. Compare
+categories with token-weighted rates, not request-count averages.
 
 ### Semantic boundary
 DeepSeek creates cache prefix units at "end of user input". Claude Code
@@ -150,6 +167,37 @@ When a new cache drop pattern emerges:
 3. **Read Claude Code changelogs**: look for new system prompts, auto-injections, or context management changes
 4. **Diff request bodies**: `python scripts/analyze.py` on consecutive requests to find what changed
 5. **Check DeepSeek API docs**: verify caching behavior hasn't changed on their side
+6. **Compare tool inventories and order**: verify definitions already present in
+   request N retain their relative order in request N+1; list additions and removals
+7. **Check protocol pairing**: every assistant `tool_use.id` must have a following
+   user `tool_result.tool_use_id`; never repair cache by crossing those identities
 
 When you find a community-reported but unfixed issue (like #64192),
 reference it in the extension code and in [`references/patterns.md`](.agents/skills/extension-dev/references/patterns.md).
+
+## Upstream Claude Code change response
+
+Claude Code system prompts, headers, tool availability, and message replay are
+upstream implementation details. After every Claude Code upgrade, or whenever
+a previously stable category regresses:
+
+1. Record the Claude Code version and capture a database watermark before the
+   reproduction. Analyze only rows created after that watermark.
+2. Run a short stable-tool sequence and a dynamic-tool sequence. Verify the
+   actual forwarded bodies; prompt text alone does not prove a tool appeared.
+3. Diff headers, system blocks, tool arrays, and overlapping messages separately.
+   Identify the first changed prefix component before changing an extension.
+4. Search Anthropic changelogs and issues for new reminders, billing fields,
+   deferred-tool behavior, compaction, or tool protocol changes.
+5. Add a minimized trace-derived regression test before implementation. For
+   stateful fixes, include concurrent-agent and changed-tool-ID cases.
+6. Keep provider behavior scoped. DeepSeek-specific `cache_control` removal stays
+   gated to DeepSeek; model-agnostic structural stabilization may remain ungated
+   only when it preserves request semantics for every model.
+7. Deploy through `scripts/setup.ps1`, require zero load failures, restart only
+   the proxy, and compare token-weighted uncached tokens before and after.
+
+If Anthropic changes tool names, tool schema shape, session/agent headers, or
+the one-tool web-search request format, review `tool-order-hold` state-key and
+request-family assumptions before expanding match rules. Unknown formats must
+fail open rather than mutate request semantics.

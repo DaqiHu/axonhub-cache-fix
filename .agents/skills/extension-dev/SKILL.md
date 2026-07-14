@@ -57,6 +57,12 @@ Log format: `[ISO8601] <extension-name>: <message>`.
 Log at minimum: first request (session start), every body mutation (what changed),
 and any skip/error conditions.
 
+Stateful extensions must key state by Claude session and agent at minimum.
+Add model and request-family dimensions when the state concerns model-specific
+or parallel internal request shapes. Never restore a `tool_result` across a
+different `tool_use_id`. Tool-order extensions may only reorder definitions
+present in the current request; they must not add, retain, or replace tools.
+
 ## Development workflow
 
 1. **Write extension** using the template above
@@ -105,17 +111,22 @@ Lower = runs earlier. Current pipeline:
 | 47 | strip-empty-system | Remove system noise early |
 | 48 | deepseek-cache-optimize | Strip cc after content is stabilized |
 | 85 | strip-billing-header | Can run after cc strip (billing header is separate) |
+| 200 | sort-stabilization | Built-in deterministic full-array sort |
+| 210 | tool-order-hold | Preserve prior order; append newly visible current tools |
+| 250 | fresh-session-sort | Later fresh-session normalization |
 
 New extensions should pick an order that runs BEFORE or AFTER existing
 extensions based on whether they need original or stabilized content.
+Do not place dynamic tool-order holding before order 200: it needs the current
+request's newly visible tools to already have deterministic relative order.
 
 ## Log location
 
-All extension logs go to `$env:LOCALAPPDATA\axonhub-cache-fix\logs\`
-(fallback: `~/.axonhub-cache-fix/logs/`).
+Deployed extension logs go to `$env:AXONHUB_CACHE_FIX_LOG_DIR`, which
+`scripts/start.ps1` sets to `~/axonhub/logs/`.
 
 To view recent activity across all extensions:
 ```bash
-ls -t $env:LOCALAPPDATA\axonhub-cache-fix\logs\
-tail -3 $env:LOCALAPPDATA\axonhub-cache-fix\logs\*.log
+Get-ChildItem "$HOME\axonhub\logs" -Filter "*.log" |
+  Sort-Object LastWriteTime -Descending
 ```

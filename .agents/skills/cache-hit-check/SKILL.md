@@ -14,8 +14,8 @@ python -c "
 import sqlite3
 conn = sqlite3.connect(r'C:\Users\hudaq\axonhub\axonhub.db')
 rows = conn.execute('''
-    SELECT prompt_tokens, cached_tokens,
-           ROUND(CAST(cached_tokens AS REAL)/prompt_tokens*100,1) as pct,
+    SELECT prompt_tokens, prompt_cached_tokens,
+           ROUND(CAST(prompt_cached_tokens AS REAL)/prompt_tokens*100,1) as pct,
            created_at
     FROM usage_logs ORDER BY created_at DESC LIMIT 20
 ''').fetchall()
@@ -26,9 +26,17 @@ conn.close()
 "
 ```
 
-Columns in `usage_logs`: `prompt_tokens` (total), `cached_tokens` (cache hit), `created_at`, `format`, `request_id`.
+Current columns in `usage_logs`: `prompt_tokens` (total),
+`prompt_cached_tokens` (cache hit), `created_at`, `format`, `request_id`.
+Legacy databases may use `cached_tokens`; `scripts/cache_report.py` supports both.
 
-Flag anything below 90% — those are the injection drops.
+Do not label every row below 90% as an injection. Run the repository report
+first; it joins request metadata and classifies expected cold/search traffic
+separately from actual prefix changes:
+
+```powershell
+python scripts/cache_report.py 10
+```
 
 ## Recent cache health
 
@@ -39,7 +47,7 @@ conn = sqlite3.connect(r'C:\Users\hudaq\axonhub\axonhub.db')
 
 # Last 50 requests hit rate distribution
 rows = conn.execute('''
-    SELECT ROUND(CAST(cached_tokens AS REAL)/prompt_tokens*100) as bucket,
+    SELECT ROUND(CAST(prompt_cached_tokens AS REAL)/prompt_tokens*100) as bucket,
            COUNT(*)
     FROM usage_logs
     WHERE created_at > datetime('now', '-1 hour')
@@ -67,11 +75,11 @@ conn = sqlite3.connect(r'C:\Users\hudaq\axonhub\axonhub.db')
 
 # Find requests below 50% cache hit
 rows = conn.execute('''
-    SELECT id, prompt_tokens, cached_tokens,
-           ROUND(CAST(cached_tokens AS REAL)/prompt_tokens*100,1) as pct,
+    SELECT id, prompt_tokens, prompt_cached_tokens,
+           ROUND(CAST(prompt_cached_tokens AS REAL)/prompt_tokens*100,1) as pct,
            created_at, request_id
     FROM usage_logs
-    WHERE CAST(cached_tokens AS REAL)/prompt_tokens < 0.5
+    WHERE CAST(prompt_cached_tokens AS REAL)/prompt_tokens < 0.5
     ORDER BY created_at DESC LIMIT 10
 ''').fetchall()
 
@@ -82,6 +90,10 @@ conn.close()
 ```
 
 Usage log IDs can be cross-referenced with AxonHub Tracing (http://localhost:8090) to download the full request body for diagnosis.
+
+For comparisons, use token-weighted hit rate:
+`sum(prompt_cached_tokens) / sum(prompt_tokens)`. Request-count averages
+overweight tiny standalone search requests and can misstate actual consumption.
 
 ## Web UI check
 

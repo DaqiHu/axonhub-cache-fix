@@ -5,7 +5,7 @@ from ~25% to ~99%.
 
 ## Problem
 
-When using Claude Code against DeepSeek's Anthropic-compatible API, four
+When using Claude Code against DeepSeek's Anthropic-compatible API, five
 patterns silently destroy prompt cache:
 
 | # | Pattern | Impact | Issue |
@@ -14,6 +14,7 @@ patterns silently destroy prompt cache:
 | 2 | `cache_control` markers move across Claude Code requests | compatibility risk | Current AxonHub removes them during native translation |
 | 3 | Claude Code "eats" user text, replaces with empty `[]` | cache break | conversation restructuring |
 | 4 | Deferred-tools and task-tools system reminders appear mid-conversation | periodic 13-26% hit | [#64192](https://github.com/anthropics/claude-code/issues/64192) |
+| 5 | Newly visible tools are alphabetically inserted into the existing tool list | 1-9% hit on the transition | Claude Code dynamic tool exposure |
 
 DeepSeek reuses only complete persisted prefix units. Claude Code's internal
 message restructuring and system-message injection can invalidate the latest
@@ -21,7 +22,7 @@ large prefix unit even during trivial tool-call conversations.
 
 ## Solution
 
-Four cache-fix proxy extensions running at controlled order:
+Five cache-fix proxy extensions running at controlled order:
 
 | Order | Extension | Action |
 |-------|-----------|--------|
@@ -29,6 +30,51 @@ Four cache-fix proxy extensions running at controlled order:
 | 47 | `strip-empty-system` | Delete empty messages and two exact bookkeeping reminders |
 | 48 | `deepseek-cache-optimize` | Strip all `cache_control` fields from DeepSeek requests |
 | 85 | `strip-billing-header` | Remove billing header block |
+| 210 | `tool-order-hold` | Preserve prior tool order and append newly visible tools |
+
+`tool-order-hold` runs after the built-in alphabetical stabilizer at order 200.
+For each session, agent, model, and request family, it remembers the prior tool
+name order. Tools that remain visible keep that relative order; tools that are
+new in the current request are appended in their current deterministic order.
+The current tool objects are reused unchanged. The extension never invents a
+tool, suppresses a tool, or restores an old schema.
+
+Standalone one-tool `web_search` requests use an independent state family.
+This prevents Claude Code's internal search worker from replacing the main
+conversation's remembered tool order.
+
+## How The Dynamic-Tool Miss Was Found
+
+The misleading symptom was a growing number of low-hit usage rows, not a
+single reproducible exception. The investigation joined `usage_logs` to
+`requests`, grouped rows by Claude session and agent, and compared consecutive
+Anthropic request bodies. Three transitions isolated the same cause:
+
+| Request transition | Newly visible tools | Hit after transition |
+|--------------------|---------------------|---------------------:|
+| `2765 -> 2767` | `SendMessage` | 1.6% |
+| `2771 -> 2775` | `WebFetch`, `WebSearch` | 9.3% |
+| `2813 -> 2814` | `EnterWorktree`, `ExitWorktree` | 5.1% |
+
+Existing tool definitions were byte-identical, but the built-in
+`sort-stabilization` extension sorted the complete array. A new name inserted
+near the middle moved every following definition, invalidating a large prompt
+suffix. The fix therefore owns only ordering: preserve the established order
+and append the new definitions.
+
+Several approaches were deliberately rejected:
+
+- Pre-injecting every possible tool would expose tools Claude Code had not made
+  available and could cause invalid tool calls.
+- Keeping removed tools would change request semantics and stale their schemas.
+- Sharing state only by session ID is unsafe because subagents share the parent
+  session and issue unrelated concurrent histories.
+- Treating every sub-90% row as a regression confuses cold agents, standalone
+  search workers, large clean conversation growth, and real prefix mutation.
+
+The state is process-local. After a proxy restart, the first request establishes
+a new baseline. This intentionally avoids persisting stale tool inventories
+across Claude Code or extension upgrades.
 
 ## Prerequisites
 
@@ -97,7 +143,23 @@ Verify with `.\scripts\start.ps1 -Status`.
 
 ```powershell
 node tests\run-all.mjs               # extensions, runtime layout, pipeline, DB schema
+python scripts\cache_report.py 10     # classified, token-weighted cache report
 ```
+
+When request metadata is available, `cache_report.py` classifies rows as:
+
+- `standalone-web-search`: Claude Code's one-message internal search worker;
+- `cold-first`: the first low-hit request for a new session/agent stream;
+- `tools-changed`: tool list, order, or definition changed;
+- `system-changed`: the system prompt changed while tools stayed stable;
+- `history-changed`: prior messages are no longer an exact prefix;
+- `clean-growth`: history only grew, so a lower hit may be cache construction
+  timing or genuinely new content;
+- `high-hit`: at least 90% of prompt tokens were served from cache.
+
+Category summaries use `sum(prompt_cached_tokens) / sum(prompt_tokens)`, not an
+unweighted average of per-request percentages. On older AxonHub schemas the
+script falls back to the original basic report.
 
 ## Troubleshooting
 
@@ -109,6 +171,8 @@ node tests\run-all.mjs               # extensions, runtime layout, pipeline, DB 
 | Cache still 0% | Verify billing header stripped: check `http://localhost:8090` tracing |
 | Cache stuck at ~25% | Download request bodies, run `python scripts/analyze.py` |
 | 400 says `tool_calls` lack matching tool messages | Compare adjacent tool IDs in AxonHub tracing; `prefix-hold` state must be isolated by session and agent |
+| Low rows increased after using web search | Run `python scripts/cache_report.py`; exclude `standalone-web-search` from main-conversation conclusions |
+| Miss occurs exactly when tools appear | Check `tool-order-hold.log`; existing tools must keep their prior order and new tools must be appended |
 
 ## License
 

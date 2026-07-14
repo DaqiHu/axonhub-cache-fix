@@ -84,6 +84,27 @@ function getContent(msg) {
 }
 ```
 
+## Pattern 7: dynamic tool insertion
+
+**Appearance**: Claude Code makes tools available during an existing session.
+The built-in alphabetical stabilizer inserts the new names into the middle of
+the complete tool array:
+
+```text
+Request N:   Agent, Bash, Edit, Glob, Grep, Read, Skill, ToolSearch, Write
+Request N+1: Agent, Bash, Edit, Glob, Grep, Read, SendMessage, Skill, ToolSearch, Write
+```
+
+**Effect**: Every definition after the insertion point moves in the serialized
+prompt. Observed transitions fell to 1.6%, 9.3%, and 5.1% cache hit.
+
+**Fix**: `tool-order-hold` (order 210) keeps current tools that were previously
+visible in their prior relative order and appends newly visible current tools.
+It does not inject unavailable tools, retain removed tools, or reuse old schemas.
+
+**Isolation**: State is keyed by session, agent, model, and request family.
+Exact one-tool `web_search` requests are separated from conversation traffic.
+
 ## Why ~25% is the floor
 
 DeepSeek creates cache prefix units at "end of user input". When system messages

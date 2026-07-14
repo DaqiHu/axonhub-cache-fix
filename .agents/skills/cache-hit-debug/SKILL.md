@@ -13,8 +13,8 @@ Diagnose DeepSeek cache hit rate drops in the AxonHub + cache-fix pipeline.
 # Check current service status (includes extension health)
 scripts/start.ps1 -Status
 
-# Tail extension logs to see what's being stripped/modified
-tail -f $env:LOCALAPPDATA\axonhub-cache-fix\logs\*.log
+# Classify recent rows before inspecting individual misses
+python scripts/cache_report.py 10
 
 # Check cache-fix debug log for recent requests
 tail -50 ~/.claude/cache-fix-debug.log
@@ -27,13 +27,13 @@ tail -50 ~/.claude/cache-fix-debug.log
 
 ```sql
 -- All recent cache hit rates
-SELECT prompt_tokens, cached_tokens,
-       ROUND(CAST(cached_tokens AS REAL) / prompt_tokens * 100, 1) as hit_pct
+SELECT prompt_tokens, prompt_cached_tokens,
+       ROUND(CAST(prompt_cached_tokens AS REAL) / prompt_tokens * 100, 1) as hit_pct
 FROM usage_logs ORDER BY created_at DESC LIMIT 10;
 
 -- Find low-hit requests
 SELECT * FROM usage_logs
-WHERE CAST(cached_tokens AS REAL) / prompt_tokens < 0.5
+WHERE CAST(prompt_cached_tokens AS REAL) / prompt_tokens < 0.5
 ORDER BY created_at DESC;
 ```
 
@@ -54,12 +54,12 @@ Download request bodies and analyze:
 python scripts/analyze.py
 ```
 
-### 2. Execution tracing — what DeepSeek actually received
+### 3. Execution tracing — what DeepSeek actually received
 Request Execution view shows the native/OAI format body after AxonHub
 translation. Response contains `cached_tokens` in OpenAI format.
 
-### 3. Extension logs — what our proxy modified
-All logs at `$env:LOCALAPPDATA\axonhub-cache-fix\logs\`:
+### 4. Extension logs — what our proxy modified
+Deployed logs are at `~/axonhub/logs/`:
 
 | Log | Extension | What it tracks |
 |-----|-----------|----------------|
@@ -67,21 +67,24 @@ All logs at `$env:LOCALAPPDATA\axonhub-cache-fix\logs\`:
 | `strip-empty-system.log` | order 47 | System messages removed |
 | `deepseek-cache.log` | order 48 | cache_control fields stripped |
 | `strip-billing-header.log` | order 85 | Billing headers removed |
+| `tool-order-hold.log` | order 210 | Tool-order baselines and reorders |
 
-### 4. cache-fix debug log
+### 5. cache-fix debug log
 `~/.claude/cache-fix-debug.log` (requires `CACHE_FIX_DEBUG=1`)
 
 ## Diagnosis workflow
 
-1. **Identify low-hit requests**: AxonHub Tracing → sort by date, find <90% hit
-2. **Download body**: Save request-body JSON to `test-data/`
-3. **Compare consecutive requests**: `python scripts/analyze.py`
-4. **Check key metrics**:
+1. **Classify recent requests**: `python scripts/cache_report.py 10`
+2. **Identify actionable rows**: prioritize `tools-changed`, `system-changed`,
+   and `history-changed`; do not treat search workers or cold starts as the same bug
+3. **Download body**: Save request-body JSON to `test-data/`
+4. **Compare consecutive requests**: `python scripts/analyze.py`
+5. **Check key metrics**:
    - `cc=0` — cache_control stripped correctly? If not, deepseek-cache-optimize may have failed
    - `trailing_sys=0` — empty system messages removed? If not, strip-empty-system may have missed a format variant
    - `first_msg=None` — overlapping messages byte-identical? If not, content differs between requests
    - `first_byte=X%` — raw byte prefix match percentage
-5. **Cross-reference with extension logs**: Did the relevant extension run at the expected time?
+6. **Cross-reference with extension logs**: Did the relevant extension run at the expected time?
 
 ## Known patterns → fix mapping
 
@@ -91,4 +94,7 @@ All logs at `$env:LOCALAPPDATA\axonhub-cache-fix\logs\`:
 | `cache_control` fields present | JSON diff breaks DeepSeek prefix | deepseek-cache-optimize |
 | user text replaced by empty `[]` | Claude Code "eats" previous turn text | prefix-hold |
 | system msg injected every ~5 turns | Task tools reminder (#64192) | strip-empty-system |
-| ~25% hit despite clean prefix | DeepSeek cache boundary at end-of-user-input | Expected (recovers next request) |
+| existing tools move when new names appear | Whole-array alphabetical sort | tool-order-hold |
+| one message and exact tool `web_search` | Standalone internal search request | Expected separate request family |
+| first low request for a new agent | Cold cache prefix | Expected cold-first |
+| lower hit with exact prefix plus new content | Cache construction timing or uncached growth | Measure weighted uncached tokens |
