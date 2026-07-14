@@ -148,7 +148,7 @@ export function buildRecord({
       cache_read_input_tokens: (usage && typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0),
     },
     hit_pct: hitPct !== null ? hitPct : null,
-    body: body || null,
+    body: body ?? null,
   };
 }
 

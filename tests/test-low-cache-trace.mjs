@@ -210,6 +210,24 @@ await test("buildRecord produces correctly ordered fields", () => {
   assert.deepEqual(keys, expected);
 });
 
+await test("buildRecord: body with falsy values is preserved (?? not ||)", () => {
+  // ?? preserves "", 0, false which || would nullify
+  const now = new Date("2026-07-14T12:00:00Z");
+  const usage = { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 10 };
+
+  const withEmptyString = module.buildRecord({ body: "", usage, now, threshold: 80 });
+  assert.strictEqual(withEmptyString.body, "", "empty string should be preserved by ??");
+
+  const withZero = module.buildRecord({ body: 0, usage, now, threshold: 80 });
+  assert.strictEqual(withZero.body, 0, "0 should be preserved by ??");
+
+  const withNull = module.buildRecord({ body: null, usage, now, threshold: 80 });
+  assert.strictEqual(withNull.body, null, "null should remain null");
+
+  const withUndefined = module.buildRecord({ usage, now, threshold: 80 });
+  assert.strictEqual(withUndefined.body, null, "undefined body should become null");
+});
+
 // ===================================================================
 // Streaming once-only capture
 // ===================================================================
