@@ -27,3 +27,6 @@ Thumbs.db
 *.bak
 test-data/
 .worktrees/
+
+# SDD scratch
+.superpowers/
