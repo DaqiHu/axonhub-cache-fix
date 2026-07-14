@@ -113,6 +113,44 @@ await test("classifyUsage: only cache_creation present → written (hitPct=0)", 
 });
 
 // ===================================================================
+// getThreshold — env-var parsing
+// ===================================================================
+
+await test("getThreshold: rounds fractional thresholds to nearest integer", () => {
+  const key = "CACHE_FIX_LOW_CACHE_TRACE_THRESHOLD";
+  const old = process.env[key];
+  try {
+    process.env[key] = "79.9";
+    assert.equal(module.getThreshold(), 80, "79.9 should round to 80");
+    process.env[key] = "80.1";
+    assert.equal(module.getThreshold(), 80, "80.1 should round to 80");
+    process.env[key] = "79.4";
+    assert.equal(module.getThreshold(), 79, "79.4 should round to 79");
+    process.env[key] = "75.5";
+    assert.equal(module.getThreshold(), 76, "75.5 should round to 76");
+  } finally {
+    if (old === undefined) delete process.env[key];
+    else process.env[key] = old;
+  }
+});
+
+await test("getThreshold: returns default for missing or unparseable values", () => {
+  const key = "CACHE_FIX_LOW_CACHE_TRACE_THRESHOLD";
+  const old = process.env[key];
+  try {
+    delete process.env[key];
+    assert.equal(module.getThreshold(), 80, "missing should default to 80");
+    process.env[key] = "";
+    assert.equal(module.getThreshold(), 80, "empty should default to 80");
+    process.env[key] = "not-a-number";
+    assert.equal(module.getThreshold(), 80, "NaN should default to 80");
+  } finally {
+    if (old === undefined) delete process.env[key];
+    else process.env[key] = old;
+  }
+});
+
+// ===================================================================
 // buildRecord — pure helper tests
 // ===================================================================
 

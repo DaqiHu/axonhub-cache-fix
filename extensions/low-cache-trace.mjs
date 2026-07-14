@@ -58,11 +58,11 @@ function archivePath(now) {
   return join(logDir(), `${ymd}.jsonl`);
 }
 
-function getThreshold() {
+export function getThreshold() {
   const raw = process.env[ENV_THRESHOLD];
   if (raw === undefined || raw === "") return DEFAULT_THRESHOLD;
   const n = Number(raw);
-  return Number.isFinite(n) ? Math.floor(n) : DEFAULT_THRESHOLD;
+  return Number.isFinite(n) ? Math.round(n) : DEFAULT_THRESHOLD;
 }
 
 function getRetentionDays() {
