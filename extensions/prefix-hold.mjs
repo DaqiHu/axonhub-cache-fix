@@ -24,14 +24,19 @@ function log(msg) {
   try { appendFileSync(LOG_PATH, line); } catch {}
 }
 
-// In-memory state per session
+// In-memory state per Claude Code session and agent.
 const state = new Map();
 
 function sessionKey(ctx) {
   const sid = ctx?.headers?.["x-claude-code-session-id"]
     || ctx?.meta?._sessionId
     || null;
-  return sid;
+  if (!sid) return null;
+
+  const agentId = ctx?.headers?.["x-claude-code-agent-id"]
+    || ctx?.meta?._agentId
+    || "main";
+  return `${sid}:${agentId}`;
 }
 
 function cloneUserMsg(msg) {
@@ -59,6 +64,21 @@ function hasTextContent(msg) {
 function freezeContent(msg) {
   if (!msg || !Array.isArray(msg.content)) return null;
   return JSON.parse(JSON.stringify(msg.content));
+}
+
+function toolResultIds(content) {
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((block) => block?.type === "tool_result")
+    .map((block) => block.tool_use_id)
+    .filter((id) => typeof id === "string");
+}
+
+function canRestoreContent(prevContent, currentContent) {
+  const prevIds = toolResultIds(prevContent);
+  const currentIds = toolResultIds(currentContent);
+  if (prevIds.length === 0 && currentIds.length === 0) return true;
+  return JSON.stringify(prevIds) === JSON.stringify(currentIds);
 }
 
 function isConsumed(msg) {
@@ -134,7 +154,7 @@ export default {
           // to keep prefix bytes stable for DeepSeek's cache matching.
           // This covers: text consumption, field-order changes, and any
           // other variation Claude Code introduces between requests.
-          if (prevContent) {
+          if (prevContent && canRestoreContent(prevContent, oldMsg?.content)) {
             msgs[prev.lastIdx] = {
               role: "user",
               content: JSON.parse(prevJson),
@@ -143,6 +163,8 @@ export default {
               `sid=${sid} HELD msg[${prev.lastIdx}]: ` +
               `prev_blocks=${prevContent?.length ?? 0} now_blocks=${oldMsg?.content?.length ?? 0}`
             );
+          } else if (prevContent) {
+            log(`sid=${sid} SKIP msg[${prev.lastIdx}]: tool_result ids changed`);
           }
         }
       }
@@ -165,7 +187,7 @@ export default {
       const currJson = JSON.stringify(currentContent);
       const prevJson = JSON.stringify(prevContent);
 
-      if (currJson !== prevJson && prevContent) {
+      if (currJson !== prevJson && prevContent && canRestoreContent(prevContent, currentContent)) {
         msgs[lastIdx] = {
           role: "user",
           content: JSON.parse(prevJson),
@@ -173,6 +195,9 @@ export default {
         log(`sid=${sid} HELD msg[${lastIdx}]: stayed, content restored from prev`);
         // Keep prev state (don't update — content should stay stable)
       } else {
+        if (currJson !== prevJson && prevContent) {
+          log(`sid=${sid} SKIP msg[${lastIdx}]: tool_result ids changed`);
+        }
         state.set(sid, {
           lastIdx,
           content: freezeContent(currentMsg),

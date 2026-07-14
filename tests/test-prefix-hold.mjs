@@ -24,9 +24,11 @@ async function test(name, fn) {
   catch (e) { failed++; console.error(`  FAIL (exception in "${name}"): ${e.message}\n${e.stack}`); }
 }
 
-function mkCtx(sid, msgs) {
+function mkCtx(sid, msgs, agentId = null) {
+  const headers = { "x-claude-code-session-id": sid };
+  if (agentId) headers["x-claude-code-agent-id"] = agentId;
   return {
-    headers: { "x-claude-code-session-id": sid },
+    headers,
     body: { model: "deepseek-v4-flash", messages: JSON.parse(JSON.stringify(msgs)) },
   };
 }
@@ -176,6 +178,48 @@ await test("non-DeepSeek model: still holds (model-agnostic)", async () => {
   assert(ctx2.body.messages[2].content.length > 0, "msg[2] restored for non-deepseek");
   assert(ctx2.body.messages[2].content[0].text === "repeat", "text restored");
   assert(ctx2.body.messages.length === 5, "all msgs present");
+});
+
+await test("concurrent agents in one session keep independent tool results", async () => {
+  const ctxA = mkCtx("shared-session", [
+    { role: "user", content: [{ type: "text", text: "agent A" }] },
+    { role: "assistant", content: [{ type: "tool_use", id: "call-a", name: "Skill", input: {} }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "call-a", content: "A" }] },
+  ], "agent-a");
+  await ext.onRequest(ctxA);
+
+  const ctxB = mkCtx("shared-session", [
+    { role: "user", content: [{ type: "text", text: "agent B" }] },
+    { role: "assistant", content: [{ type: "tool_use", id: "call-b", name: "Skill", input: {} }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "call-b", content: "B" }] },
+  ], "agent-b");
+  await ext.onRequest(ctxB);
+
+  assert(
+    ctxB.body.messages[2].content[0].tool_use_id === "call-b",
+    "agent B tool result is not replaced with agent A state"
+  );
+});
+
+await test("same agent does not restore a different tool-result identity", async () => {
+  const ctx = mkCtx("branch-session", [
+    { role: "user", content: [{ type: "text", text: "first branch" }] },
+    { role: "assistant", content: [{ type: "tool_use", id: "call-old", name: "Skill", input: {} }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "call-old", content: "old" }] },
+  ], "agent-one");
+  await ext.onRequest(ctx);
+
+  const branched = mkCtx("branch-session", [
+    { role: "user", content: [{ type: "text", text: "new branch" }] },
+    { role: "assistant", content: [{ type: "tool_use", id: "call-new", name: "Skill", input: {} }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "call-new", content: "new" }] },
+  ], "agent-one");
+  await ext.onRequest(branched);
+
+  assert(
+    branched.body.messages[2].content[0].tool_use_id === "call-new",
+    "new tool-result identity is preserved"
+  );
 });
 
 await test("field order change: restore to prev content", async () => {

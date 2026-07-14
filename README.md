@@ -108,6 +108,7 @@ node tests\run-all.mjs               # extensions, runtime layout, pipeline, DB 
 | Logs not appearing | Verify `~/axonhub/logs/` exists; check permissions |
 | Cache still 0% | Verify billing header stripped: check `http://localhost:8090` tracing |
 | Cache stuck at ~25% | Download request bodies, run `python scripts/analyze.py` |
+| 400 says `tool_calls` lack matching tool messages | Compare adjacent tool IDs in AxonHub tracing; `prefix-hold` state must be isolated by session and agent |
 
 ## License
 

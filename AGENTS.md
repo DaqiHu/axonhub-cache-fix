@@ -36,6 +36,16 @@ All extensions must:
 - Log changes to `$env:AXONHUB_CACHE_FIX_LOG_DIR` (default `~/axonhub/logs/`)
 - Include unit tests in `tests/`
 
+### Stateful extension safety
+- Scope in-memory state by both `x-claude-code-session-id` and
+  `x-claude-code-agent-id`. Subagents share the parent session ID and can issue
+  concurrent requests with unrelated message histories.
+- Never restore or replace a `tool_result` when its `tool_use_id` differs from
+  the stored content. Every assistant `tool_use.id` must remain paired with the
+  following user `tool_result.tool_use_id`.
+- Add concurrent-agent and changed-tool-ID regression tests for any extension
+  that stores message content across requests.
+
 ### Adding an extension
 1. Create `extensions/<name>.mjs` with the template
 2. Add unit tests in `tests/test-<name>.mjs`
