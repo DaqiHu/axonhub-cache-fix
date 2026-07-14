@@ -63,6 +63,10 @@ try {
     assert.equal(existsSync(join(runtime, "model-families.mjs")), true);
     assert.equal(existsSync(join(runtime, "extensions", "model-families.mjs")), false);
     assert.equal(existsSync(join(runtime, "session-mirror-writer.mjs")), true);
+    const config = JSON.parse(
+      readFileSync(join(runtime, "extensions", "extensions.json"), "utf8"),
+    );
+    assert.deepEqual(config["tool-order-hold"], { enabled: true, order: 210 });
   });
 
   await test("validator loads required extensions with zero failures", () => {
@@ -74,6 +78,7 @@ try {
       "prefix-hold",
       "strip-empty-system",
       "deepseek-cache-optimize",
+      "tool-order-hold",
       "strip-billing-header",
     ]) {
       assert.equal(summary.loaded.includes(name), true, `${name} loaded`);
@@ -109,11 +114,11 @@ try {
     const target = cloneRuntime("disabled-required");
     const configPath = join(target, "extensions", "extensions.json");
     const config = JSON.parse(readFileSync(configPath, "utf8"));
-    config["strip-empty-system"].enabled = false;
+    config["tool-order-hold"].enabled = false;
     writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
     const result = validate(target);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /required extensions missing.*strip-empty-system/i);
+    assert.match(result.stderr, /required extensions missing.*tool-order-hold/i);
   });
 } finally {
   rmSync(scratch, { recursive: true, force: true });

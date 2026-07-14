@@ -6,6 +6,7 @@ const REQUIRED_EXTENSIONS = [
   "prefix-hold",
   "strip-empty-system",
   "deepseek-cache-optimize",
+  "tool-order-hold",
   "strip-billing-header",
 ];
 

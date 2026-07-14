@@ -9,6 +9,7 @@
   "fingerprint-strip": { "enabled": true, "order": 100 },
   "image-strip": { "enabled": true, "order": 150 },
   "sort-stabilization": { "enabled": true, "order": 200 },
+  "tool-order-hold": { "enabled": true, "order": 210 },
   "fresh-session-sort": { "enabled": true, "order": 250 },
   "identity-normalization": { "enabled": true, "order": 300 },
   "smoosh-split": { "enabled": true, "order": 320 },
@@ -27,4 +28,3 @@
   "request-log": { "enabled": false, "order": 700 },
   "jsonl-session-mirror": { "enabled": true, "order": 720 }
 }
-
