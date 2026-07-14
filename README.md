@@ -192,6 +192,7 @@ without duplicate tools, orphaned tool results, missing tool results, or the
 | 400 says `tool_calls` lack matching tool messages | Compare adjacent tool IDs in AxonHub tracing; `prefix-hold` state must be isolated by session and agent |
 | Low rows increased after using web search | Run `python scripts/cache_report.py`; exclude `standalone-web-search` from main-conversation conclusions |
 | Miss occurs exactly when tools appear | Check `tool-order-hold.log`; existing tools must keep their prior order and new tools must be appended |
+| Codex says no tools on one provider | Compare Responses `input[].additional_tools`; see [provider compatibility research](docs/research/2026-07-14-codex-additional-tools-provider-compatibility.md) |
 
 ## License
 
