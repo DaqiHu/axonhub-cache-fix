@@ -1,123 +1,60 @@
 ---
 name: cache-hit-check
-description: "Query AxonHub cache hit rates from the SQLite database, web UI, or response files. Use when checking cache, asking about cache hit rate, or monitoring DeepSeek prompt cache efficiency."
+description: "Use when checking AxonHub cache hit rate, identifying low-hit DeepSeek requests, or monitoring prompt cache efficiency without mixing models or request formats."
 ---
 
 # Cache Hit Check
 
-Query DeepSeek cache hit rates across all available data sources.
-
-## Fastest: SQLite query
-
-```bash
-python -c "
-import sqlite3
-conn = sqlite3.connect(r'C:\Users\hudaq\axonhub\axonhub.db')
-rows = conn.execute('''
-    SELECT prompt_tokens, prompt_cached_tokens,
-           ROUND(CAST(prompt_cached_tokens AS REAL)/prompt_tokens*100,1) as pct,
-           created_at
-    FROM usage_logs ORDER BY created_at DESC LIMIT 20
-''').fetchall()
-for r in rows:
-    flag = ' !!' if r[2] < 90 else ''
-    print(f'{r[3][:19]}  hit={r[1]:>6}/{r[0]:>6} ={r[2]:>5.1f}%{flag}')
-conn.close()
-"
-```
-
-Current columns in `usage_logs`: `prompt_tokens` (total),
-`prompt_cached_tokens` (cache hit), `created_at`, `format`, `request_id`.
-Legacy databases may use `cached_tokens`; `scripts/cache_report.py` supports both.
-
-Do not label every row below 90% as an injection. Run the repository report
-first; it joins request metadata and classifies expected cold/search traffic
-separately from actual prefix changes:
+Use the classified report before raw SQL. Its default scope is
+`deepseek%` plus `anthropic/messages`, ordered by request creation time with a
+24-hour lookback for conversation state.
 
 ```powershell
-python scripts/cache_report.py 10
+python scripts/cache_report.py 60 --low-only
+python scripts/cache_report.py 60 --summary
 ```
 
-## Recent cache health
+The summary is token-weighted:
+`sum(cached_tokens) / sum(prompt_tokens)`. Never average request percentages.
 
-```bash
-python -c "
-import sqlite3
-conn = sqlite3.connect(r'C:\Users\hudaq\axonhub\axonhub.db')
+## Scope controls
 
-# Last 50 requests hit rate distribution
-rows = conn.execute('''
-    SELECT ROUND(CAST(prompt_cached_tokens AS REAL)/prompt_tokens*100) as bucket,
-           COUNT(*)
-    FROM usage_logs
-    WHERE created_at > datetime('now', '-1 hour')
-    GROUP BY bucket ORDER BY bucket
-''').fetchall()
+```powershell
+# One model or family (SQLite LIKE syntax)
+python scripts/cache_report.py 60 --model "deepseek-v4-flash" --low-only
 
-total = sum(r[1] for r in rows)
-print('Last hour cache distribution:')
-for bucket, count in rows:
-    bar = '#' * (count * 40 // max(r[1] for r in rows))
-    pct = count / total * 100
-    print(f'  {bucket:>3}%: {bar} ({count} reqs, {pct:.0f}%)')
-if not rows:
-    print('  No data in last hour')
-conn.close()
-"
+# Explicit cross-model investigation; never silently mix this with DeepSeek
+python scripts/cache_report.py 60 --all-models --all-formats --low-only
+
+# Extend state history when a long-idle conversation resumed
+python scripts/cache_report.py 10 --lookback 2880 --low-only
 ```
 
-## Find specific low-hit requests
+Interpret categories before calling a row a regression:
 
-```bash
-python -c "
-import sqlite3, json
-conn = sqlite3.connect(r'C:\Users\hudaq\axonhub\axonhub.db')
+| Category | Meaning |
+|---|---|
+| `cold-first` | New session/agent stream; expected cold prefix |
+| `standalone-web-search` | Independent one-tool search worker |
+| `large-growth` | Exact old prefix plus at least 8k serialized chars |
+| `appended-system` | Exact old prefix plus meaningful or unknown system event |
+| `tools-changed` | Tool list/order/schema changed; investigate |
+| `top-system-changed` | Top-level system changed; investigate |
+| `history-changed` | Earlier messages changed; investigate |
+| `clean-growth` | Small exact-prefix growth; correlate with timing and next row |
+| `high-hit` | At least 90% cached |
 
-# Find requests below 50% cache hit
-rows = conn.execute('''
-    SELECT id, prompt_tokens, prompt_cached_tokens,
-           ROUND(CAST(prompt_cached_tokens AS REAL)/prompt_tokens*100,1) as pct,
-           created_at, request_id
-    FROM usage_logs
-    WHERE CAST(prompt_cached_tokens AS REAL)/prompt_tokens < 0.5
-    ORDER BY created_at DESC LIMIT 10
-''').fetchall()
+`appended-system` is not a removal instruction. Repository instructions, file
+change notices, and background-task completion/failure events must be preserved.
 
-for r in rows:
-    print(f'usage_log id={r[0]} request_{r[5]}  hit={r[2]}/{r[1]}={r[3]}%  {r[4][:19]}')
-conn.close()
-"
+For provider tool compatibility, run a deliberate tool-required prompt, record
+the DB watermark, then use the read-only report:
+
+```powershell
+python scripts/provider_report.py 30 --after-request-id <watermark> --expect-tool
 ```
 
-Usage log IDs can be cross-referenced with AxonHub Tracing (http://localhost:8090) to download the full request body for diagnosis.
+Without `--expect-tool`, a completed response with no tool call is reported as
+`no-tool-call`, not as incompatibility. The script never sends paid requests.
 
-For comparisons, use token-weighted hit rate:
-`sum(prompt_cached_tokens) / sum(prompt_tokens)`. Request-count averages
-overweight tiny standalone search requests and can misstate actual consumption.
-
-## Web UI check
-
-Open http://localhost:8090 → Tracing tab.
-Each request shows `usage.cache_read_input_tokens` in the response body.
-
-For native format cache data, use Request Execution view — response has `cached_tokens` in `prompt_tokens_details`.
-
-## Response file check
-
-If response body JSON files are downloaded:
-
-```bash
-python -c "
-import json, sys
-for f in sys.argv[1:]:
-    with open(f) as fp: resp = json.load(fp)
-    u = resp.get('usage', {})
-    hit = u.get('cache_read_input_tokens') or u.get('prompt_tokens_details',{}).get('cached_tokens', '?')
-    inp = u.get('input_tokens') or u.get('prompt_tokens', '?')
-    print(f'{f}: hit={hit} input={inp}')
-" response-*.json
-```
-
-## Service check
-
-`scripts/start.ps1 -Status` shows extension health and recent log activity.
+Service health remains available through `scripts/start.ps1 -Status`.

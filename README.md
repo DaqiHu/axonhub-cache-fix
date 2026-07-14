@@ -6,7 +6,8 @@ from ~25% to ~99%.
 ## Problem
 
 When using Claude Code against DeepSeek's Anthropic-compatible API, five
-patterns silently destroy prompt cache:
+structural patterns can destroy prompt cache. Claude Code also emits meaningful
+system events that cause expected one-time misses and must not be stripped:
 
 | # | Pattern | Impact | Issue |
 |---|---------|--------|-------|
@@ -15,6 +16,7 @@ patterns silently destroy prompt cache:
 | 3 | Claude Code "eats" user text, replaces with empty `[]` | cache break | conversation restructuring |
 | 4 | Deferred-tools and task-tools system reminders appear mid-conversation | periodic 13-26% hit | [#64192](https://github.com/anthropics/claude-code/issues/64192) |
 | 5 | Newly visible tools are alphabetically inserted into the existing tool list | 1-9% hit on the transition | Claude Code dynamic tool exposure |
+| 6 | Worktree instructions, file-change notices, and background-task events are appended | one-time low hit | Semantic input; preserve and classify |
 
 DeepSeek reuses only complete persisted prefix units. Claude Code's internal
 message restructuring and system-message injection can invalidate the latest
@@ -143,16 +145,24 @@ Verify with `.\scripts\start.ps1 -Status`.
 
 ```powershell
 node tests\run-all.mjs               # extensions, runtime layout, pipeline, DB schema
-python scripts\cache_report.py 10     # classified, token-weighted cache report
+python scripts\cache_report.py 60 --low-only  # DeepSeek Anthropic low rows only
+python scripts\cache_report.py 60 --summary   # token-weighted health summary
 ```
+
+By default `cache_report.py` includes only `deepseek%` models in
+`anthropic/messages`, orders by `requests.created_at`, and reads 24 hours of
+lookback state so a resumed conversation is not mistaken for a new stream.
+Use `--all-models --all-formats` only for an explicit cross-provider audit.
 
 When request metadata is available, `cache_report.py` classifies rows as:
 
 - `standalone-web-search`: Claude Code's one-message internal search worker;
 - `cold-first`: the first low-hit request for a new session/agent stream;
 - `tools-changed`: tool list, order, or definition changed;
-- `system-changed`: the system prompt changed while tools stayed stable;
+- `top-system-changed`: the top-level system prompt changed;
+- `appended-system`: exact history growth containing a system message;
 - `history-changed`: prior messages are no longer an exact prefix;
+- `large-growth`: exact old history plus at least 8k serialized chars;
 - `clean-growth`: history only grew, so a lower hit may be cache construction
   timing or genuinely new content;
 - `high-hit`: at least 90% of prompt tokens were served from cache.
@@ -160,6 +170,51 @@ When request metadata is available, `cache_report.py` classifies rows as:
 Category summaries use `sum(prompt_cached_tokens) / sum(prompt_tokens)`, not an
 unweighted average of per-request percentages. On older AxonHub schemas the
 script falls back to the original basic report.
+
+`appended-system` is a diagnostic category, not permission to delete content.
+The safe strip allowlist contains only empty system messages and the two exact
+bookkeeping families: deferred-tools availability and task-tools inactivity
+reminders. Repository instructions, user/linter file diffs, and background-task
+completion/failure notifications change model behavior and must remain.
+
+### Trace and provider probes
+
+Downloaded request bodies can be analyzed from any directory. Files are sorted
+by numeric request ID rather than mtime:
+
+```powershell
+python scripts\analyze.py --dir .\test-data "*Request_*.json"
+```
+
+For Codex Responses provider compatibility, first run a deliberate prompt that
+must invoke a tool and record a DB watermark. Then inspect the saved traces:
+
+```powershell
+python scripts\provider_report.py 30 --after-request-id <watermark> --expect-tool
+```
+
+The provider report is read-only and never sends paid requests. Without
+`--expect-tool`, a completed response without `custom_tool_call` is only
+`no-tool-call`, not enough evidence to declare incompatibility.
+
+### Why sporadic low rows remain
+
+DeepSeek states that cache construction takes seconds. Real traces show three
+non-regression families: cold subagents, exact-prefix requests with large new
+tool/skill content, and meaningful appended system events. One exact-prefix
+request followed the previous completion by about 0.3 seconds, appended roughly
+10.8k serialized chars, reused only older cache units, and recovered on the next
+request. The proxy cannot repair that after the response; a blanket delay would
+increase latency without guaranteeing a hit.
+
+Representative 2026-07-14 traces:
+
+| Request | Hit | Exact-prefix addition | Classification |
+|---:|---:|---|---|
+| `3883` | 34.7% | ~10.8k chars of skill/tool content, sent ~0.3s after prior completion | `large-growth`; next request recovered |
+| `4032` | 0.5% | ~30.6k chars of worktree `CLAUDE.md` / `AGENTS.md` | `appended-system`; preserve |
+| `4044` | 10.4% | ~8.6k chars of intentional file-change diff | `appended-system`; preserve |
+| `4121`, `4131` | 0.6%, 0.9% | background-task completion/failure events | `appended-system`; preserve |
 
 ### Measured dynamic-tool benchmark
 
@@ -188,11 +243,13 @@ without duplicate tools, orphaned tool results, missing tool results, or the
 | Extensions not loaded | `.\scripts\start.ps1 -Status` — runtime must be `VALID` |
 | Logs not appearing | Verify `~/axonhub/logs/` exists; check permissions |
 | Cache still 0% | Verify billing header stripped: check `http://localhost:8090` tracing |
-| Cache stuck at ~25% | Download request bodies, run `python scripts/analyze.py` |
+| Cache stuck at ~25% | Run `python scripts/cache_report.py 60 --low-only`, then analyze adjacent bodies |
 | 400 says `tool_calls` lack matching tool messages | Compare adjacent tool IDs in AxonHub tracing; `prefix-hold` state must be isolated by session and agent |
-| Low rows increased after using web search | Run `python scripts/cache_report.py`; exclude `standalone-web-search` from main-conversation conclusions |
+| Low rows increased after using web search | Exclude classified `standalone-web-search` from main-conversation conclusions |
+| Low row is `appended-system` | Inspect exact text; preserve meaningful or unknown events |
+| Low row is `large-growth` | Verify exact native prefix and measure appended chars/tokens |
 | Miss occurs exactly when tools appear | Check `tool-order-hold.log`; existing tools must keep their prior order and new tools must be appended |
-| Codex says no tools on one provider | Compare Responses `input[].additional_tools`; see [provider compatibility research](docs/research/2026-07-14-codex-additional-tools-provider-compatibility.md) |
+| Codex says no tools on one provider | Run a deliberate tool probe, then `python scripts/provider_report.py 30 --after-request-id <watermark> --expect-tool`; see [provider compatibility research](docs/research/2026-07-14-codex-additional-tools-provider-compatibility.md) |
 
 ## License
 

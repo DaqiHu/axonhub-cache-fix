@@ -1,5 +1,6 @@
-"""Query AxonHub DB for recent cache hit rates."""
+"""Classify recent AxonHub cache behavior without mixing request families."""
 
+import argparse
 import json
 import sqlite3
 import sys
@@ -9,12 +10,16 @@ from pathlib import Path
 
 DB = Path.home() / "axonhub" / "axonhub.db"
 CACHE_COLUMNS = ("prompt_cached_tokens", "cached_tokens")
+LOW_HIT_THRESHOLD = 90.0
+LARGE_GROWTH_CHARS = 8_000
 CLASSIFICATIONS = (
     "standalone-web-search",
     "cold-first",
     "tools-changed",
-    "system-changed",
+    "top-system-changed",
+    "appended-system",
     "history-changed",
+    "large-growth",
     "clean-growth",
     "high-hit",
 )
@@ -37,11 +42,11 @@ def query_rows(conn, minutes):
     return conn.execute(
         f"""
         SELECT id, prompt_tokens, {column},
-               ROUND(CAST({column} AS REAL) / NULLIF(prompt_tokens, 0) * 100, 1) as pct,
+               ROUND(CAST({column} AS REAL) / NULLIF(prompt_tokens, 0) * 100, 1),
                created_at
         FROM usage_logs
         WHERE created_at > datetime('now', ?)
-        ORDER BY created_at
+        ORDER BY created_at, id
         """,
         (modifier,),
     ).fetchall()
@@ -56,27 +61,49 @@ def request_metadata_available(conn):
     request_columns = table_columns(conn, "requests")
     return {"request_id", "model_id"}.issubset(usage_columns) and {
         "id",
+        "created_at",
+        "model_id",
+        "format",
         "request_headers",
         "request_body",
         "channel_id",
     }.issubset(request_columns)
 
 
-def query_detailed_rows(conn, minutes):
+def query_detailed_rows(
+    conn,
+    minutes,
+    lookback_minutes=1440,
+    model_pattern="deepseek%",
+    request_format="anthropic/messages",
+    after_request_id=None,
+):
     column = cache_column(conn)
-    modifier = f"-{int(minutes)} minutes"
+    history_modifier = f"-{int(minutes) + int(lookback_minutes)} minutes"
+    window_modifier = f"-{int(minutes)} minutes"
+    filters = ["r.created_at > datetime('now', ?)"]
+    params = [window_modifier, after_request_id, after_request_id, history_modifier]
+    if model_pattern:
+        filters.append("r.model_id LIKE ?")
+        params.append(model_pattern)
+    if request_format:
+        filters.append("r.format = ?")
+        params.append(request_format)
     rows = conn.execute(
         f"""
-        SELECT u.id, u.request_id, u.model_id, u.prompt_tokens, u.{column},
+        SELECT u.id, u.request_id, r.model_id, u.prompt_tokens, u.{column},
                ROUND(CAST(u.{column} AS REAL) /
                      NULLIF(u.prompt_tokens, 0) * 100, 1),
-               u.created_at, r.request_headers, r.request_body, r.channel_id
+               r.created_at, u.created_at, r.request_headers, r.request_body,
+               r.channel_id, r.format,
+               (r.created_at > datetime('now', ?)
+                AND (? IS NULL OR r.id > ?)) AS in_window
         FROM usage_logs u
         JOIN requests r ON r.id = u.request_id
-        WHERE u.created_at > datetime('now', ?)
-        ORDER BY u.created_at, u.id
+        WHERE {' AND '.join(filters)}
+        ORDER BY r.created_at, r.id, u.id
         """,
-        (modifier,),
+        tuple(params),
     ).fetchall()
     return [
         {
@@ -86,10 +113,13 @@ def query_detailed_rows(conn, minutes):
             "prompt_tokens": row[3],
             "cached_tokens": row[4],
             "pct": row[5] or 0.0,
-            "created_at": row[6],
-            "request_headers": _json_object(row[7]),
-            "request_body": _json_object(row[8]),
-            "channel_id": row[9],
+            "request_created_at": row[6],
+            "usage_created_at": row[7],
+            "request_headers": _json_object(row[8]),
+            "request_body": _json_object(row[9]),
+            "channel_id": row[10],
+            "format": row[11],
+            "in_window": bool(row[12]),
         }
         for row in rows
     ]
@@ -116,7 +146,7 @@ def _header_value(headers, name):
 
 
 def _canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def _tool_names(body):
@@ -139,6 +169,10 @@ def _is_history_growth(previous, current):
     return len(current) >= len(previous) and current[: len(previous)] == previous
 
 
+def _message_chars(messages):
+    return sum(len(_canonical(message)) for message in messages)
+
+
 def classify_rows(rows):
     states = {}
     classified = []
@@ -152,9 +186,15 @@ def classify_rows(rows):
         standalone = names == ["web_search"] and len(messages) == 1
 
         if standalone:
-            row["classification"] = "standalone-web-search"
-            row["tools"] = names
-            row["tools_added"] = names
+            row.update(
+                classification="standalone-web-search",
+                tools=names,
+                tools_added=names,
+                messages_added=0,
+                growth_chars=0,
+                appended_system=0,
+                appended_system_chars=0,
+            )
             classified.append(row)
             continue
 
@@ -168,25 +208,43 @@ def classify_rows(rows):
         added = names if previous is None else [
             name for name in names if name not in previous["tools"]
         ]
+        history_growth = previous is not None and _is_history_growth(
+            previous["messages"], messages
+        )
+        appended = messages[len(previous["messages"]):] if history_growth else []
+        appended_system = [
+            message
+            for message in appended
+            if isinstance(message, dict) and message.get("role") == "system"
+        ]
+        growth_chars = _message_chars(appended)
 
-        if row["pct"] >= 90:
+        if row["pct"] >= LOW_HIT_THRESHOLD:
             classification = "high-hit"
         elif previous is None and len(messages) <= 1:
             classification = "cold-first"
         elif previous is not None and tool_signature != previous["tool_signature"]:
             classification = "tools-changed"
         elif previous is not None and system_signature != previous["system_signature"]:
-            classification = "system-changed"
-        elif previous is not None and not _is_history_growth(
-            previous["messages"], messages
-        ):
+            classification = "top-system-changed"
+        elif previous is not None and not history_growth:
             classification = "history-changed"
+        elif appended_system:
+            classification = "appended-system"
+        elif growth_chars >= LARGE_GROWTH_CHARS:
+            classification = "large-growth"
         else:
             classification = "clean-growth"
 
-        row["classification"] = classification
-        row["tools"] = names
-        row["tools_added"] = added
+        row.update(
+            classification=classification,
+            tools=names,
+            tools_added=added,
+            messages_added=len(appended),
+            growth_chars=growth_chars,
+            appended_system=len(appended_system),
+            appended_system_chars=_message_chars(appended_system),
+        )
         classified.append(row)
         states[key] = {
             "tool_signature": tool_signature,
@@ -209,7 +267,7 @@ def print_report(rows, minutes):
         if row[3] < 50:
             tag = " < very low"
             drops += 1
-        elif row[3] < 90:
+        elif row[3] < LOW_HIT_THRESHOLD:
             tag = " < low"
             drops += 1
         print(
@@ -217,25 +275,44 @@ def print_report(rows, minutes):
             f"={row[3]:>5.1f}%{tag}"
         )
 
-    total = len(rows)
-    good = total - drops
-    first_cold = "(cold start OK)" if rows[0][3] < 50 else ""
-    print(f"\n{good}/{total} requests >= 90%   {drops} drops {first_cold}")
+    print(f"\n{len(rows) - drops}/{len(rows)} requests >= 90%   {drops} low")
 
 
-def print_detailed_report(rows, minutes):
+def print_detailed_report(rows, minutes, low_only=False, summary_only=False):
+    rows = [row for row in rows if row.get("in_window", True)]
     if not rows:
-        print(f"No data in last {minutes} min")
+        print(f"No matching data in last {minutes} min")
         return
+
+    models = ",".join(sorted({row["model_id"] for row in rows}))
+    formats = ",".join(sorted({row["format"] for row in rows}))
+    print(f"Scope: model={models} format={formats} window={minutes}m")
+
+    detail_rows = (
+        [row for row in rows if row["pct"] < LOW_HIT_THRESHOLD]
+        if low_only
+        else rows
+    )
+    if not summary_only:
+        if not detail_rows:
+            print("No rows below 90%")
+        for row in detail_rows:
+            added = ",".join(row["tools_added"]) or "-"
+            growth = f" growth={row['growth_chars']}c" if row["growth_chars"] else ""
+            system = (
+                f" system={row['appended_system_chars']}c"
+                if row["appended_system"]
+                else ""
+            )
+            print(
+                f"#{row['id']:>4} req={row['request_id']:>4}: "
+                f"hit={row['cached_tokens']:>7}/{row['prompt_tokens']:>7} "
+                f"={row['pct']:>5.1f}%  {row['classification']}  "
+                f"added={added}{growth}{system} channel={row['channel_id']}"
+            )
 
     summaries = defaultdict(lambda: {"count": 0, "prompt": 0, "cached": 0})
     for row in rows:
-        added = ",".join(row["tools_added"]) or "-"
-        print(
-            f"#{row['id']:>4} req={row['request_id']:>4}: "
-            f"hit={row['cached_tokens']:>7}/{row['prompt_tokens']:>7} "
-            f"={row['pct']:>5.1f}%  {row['classification']}  added={added}"
-        )
         summary = summaries[row["classification"]]
         summary["count"] += 1
         summary["prompt"] += row["prompt_tokens"]
@@ -259,21 +336,42 @@ def print_detailed_report(rows, minutes):
         )
 
 
-def main(argv=None):
-    args = sys.argv[1:] if argv is None else argv
-    minutes = int(args[0]) if args else 10
+def parse_args(argv):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("minutes", nargs="?", type=int, default=10)
+    parser.add_argument("--db", type=Path, default=DB)
+    parser.add_argument("--lookback", type=int, default=1440)
+    parser.add_argument("--after-request-id", type=int)
+    parser.add_argument("--model", default="deepseek%", help="SQLite LIKE pattern")
+    parser.add_argument("--format", dest="request_format", default="anthropic/messages")
+    parser.add_argument("--all-models", action="store_true")
+    parser.add_argument("--all-formats", action="store_true")
+    parser.add_argument("--low-only", action="store_true")
+    parser.add_argument("--summary", action="store_true")
+    return parser.parse_args(argv)
 
-    if not DB.exists():
-        print(f"DB not found: {DB}", file=sys.stderr)
+
+def main(argv=None):
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    if not args.db.exists():
+        print(f"DB not found: {args.db}", file=sys.stderr)
         return 1
 
-    conn = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{args.db.resolve().as_posix()}?mode=ro", uri=True)
     try:
         if request_metadata_available(conn):
-            rows = classify_rows(query_detailed_rows(conn, minutes))
+            rows = query_detailed_rows(
+                conn,
+                args.minutes,
+                lookback_minutes=args.lookback,
+                model_pattern=None if args.all_models else args.model,
+                request_format=None if args.all_formats else args.request_format,
+                after_request_id=args.after_request_id,
+            )
+            rows = classify_rows(rows)
             detailed = True
         else:
-            rows = query_rows(conn, minutes)
+            rows = query_rows(conn, args.minutes)
             detailed = False
     except RuntimeError as error:
         print(f"Cache report failed: {error}", file=sys.stderr)
@@ -282,9 +380,14 @@ def main(argv=None):
         conn.close()
 
     if detailed:
-        print_detailed_report(rows, minutes)
+        print_detailed_report(
+            rows,
+            args.minutes,
+            low_only=args.low_only,
+            summary_only=args.summary,
+        )
     else:
-        print_report(rows, minutes)
+        print_report(rows, args.minutes)
     return 0
 
 

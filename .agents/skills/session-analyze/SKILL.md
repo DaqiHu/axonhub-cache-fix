@@ -1,99 +1,51 @@
 ---
 name: session-analyze
-description: "Download and analyze AxonHub request traces to understand Claude Code conversation patterns and cache behavior. Use when comparing request bodies, finding cache-breaking patterns, or diagnosing low cache hit rates."
+description: "Use when comparing AxonHub request traces, locating the first cache-breaking prefix change, or explaining low-hit Claude Code conversation transitions."
 ---
 
 # Session Analyze
 
-Download, compare, and diagnose AxonHub request traces to understand
-cache hit patterns.
+Start with the database classifier so request selection is model- and
+format-correct:
 
-## Downloading
-
-1. Open http://localhost:8090
-2. Tracing → Requests: shows Anthropic-format bodies (what cache-fix modifies)
-3. Tracing → Request Execution: shows native format (what DeepSeek receives)
-4. Click a request → download body JSON
-5. Save to any directory (e.g., `test-data/` or Downloads)
-
-For cache hit rates, prefer Execution view — response includes
-`cached_tokens` in native format.
-
-## Analysis script
-
-`scripts/analyze.py` processes downloaded request bodies:
-
-```bash
-# Analyze specific request files
-python scripts/analyze.py "*Request_17*.json"
-
-# Find and analyze the newest files automatically
-python scripts/analyze.py
+```powershell
+python scripts/cache_report.py 60 --low-only
 ```
 
-Output shows:
-- Message counts, cache_control count, trailing system count
-- Last 4 messages for context
-- Byte-level comparison between consecutive requests
-- First message diff position (None = all overlapping msgs identical)
+When reproducing, add `--after-request-id <watermark>` so only new rows print
+while pre-watermark lookback still seeds stream state.
 
-## Finding the newest files
+In AxonHub, download both views for adjacent suspicious request IDs:
 
-The script searches the directory for request IDs and sorts by number.
-Newest = highest number not yet analyzed.
+- Tracing / Requests: Anthropic body after cache-fix.
+- Request Execution: native body sent to the provider.
 
-```bash
-# Find request IDs
-python -c "
-from pathlib import Path
-import re
-all = []
-for f in Path('.').glob('*axonhub*Request*body*'):
-    m = re.search(r'(\d+)', f.stem.split('_')[-1])
-    if m: all.append((int(m.group(1)), f))
-for n, f in sorted(all, reverse=True)[:10]:
-    print(n, f.name)
-"
+Save files anywhere and pass the directory explicitly:
+
+```powershell
+python scripts/analyze.py --dir .\test-data "*Request_*.json"
 ```
 
-## Interpreting analysis output
+The analyzer sorts by numeric request ID, not file mtime. It reports model,
+format, message/system/tool counts, exact history prefix, tool additions and
+removals, appended system messages, and serialized growth chars.
 
-### Before/after verification
+Interpret comparisons in this order:
 
-After deploying a fix, download the same request range and compare:
+1. `tools_same`: if false, inspect order, names, and schemas.
+2. `top_system_same`: if false, inspect billing nonce and upstream system drift.
+3. `history_prefix`: if false, locate `first_msg` and verify tool identities.
+4. `appended_system`: inspect exact text. Approved reminder prefixes may be
+   removed; repository instructions, file-change notices, and background-task
+   notifications must be preserved.
+5. Exact prefix plus large growth: expected new content/cache construction, not
+   automatically an extension regression.
 
-```
-Before (old extension):
-  1766: cc=0 trailing_sys=1  ← system msg still present
-  first_msg=None  ← content identical, but cache still dropped
+Cache formulas differ by response family:
 
-After (new extension):
-  1766: cc=0 trailing_sys=0  ← system msg removed!
-  first_msg=None  ← content match improved, cache should hit
-```
+- Anthropic: `cache_read_input_tokens / (cache_read_input_tokens + cache_creation_input_tokens + input_tokens)`.
+- OpenAI: `cached_tokens / prompt_tokens`.
 
-### Cache hit rate mapping
-
-| Pattern | Meaning |
-|---------|---------|
-| `cc=0` | cache_control stripped correctly |
-| `cc>0` | deepseek-cache-optimize not working |
-| `trailing_sys=0` | empty system messages removed |
-| `trailing_sys>0` | Claude Code injected system msg, extension missed it |
-| `first_msg=None` | All overlapping messages byte-identical |
-| `first_msg=N` | Content changed at position N between requests |
-| `first_byte=X%` | Raw byte prefix match percentage |
-
-### Common patterns to investigate
-
-1. **first_msg at session growth point**: Normal — new messages added at end.
-   Cache should still hit for the overlapping prefix.
-
-2. **first_msg inside old content**: Claude Code modified historical messages.
-   Check if prefix-hold should have restored this position.
-
-3. **system msg in tail**: Check `strip-empty-system.log` to confirm it was removed.
-   If the log shows no removal but trailing_sys>0, the extension missed a format variant.
-
-4. **content format change**: Claude Code varies `content` between string and array.
-   Extensions must handle both: `typeof msg.content === "string"` vs `Array.isArray(msg.content)`.
+Do not use the old ambiguous formula or infer a cache break from raw JSON key
+order alone. Provider caching depends on the translated token prefix; compare
+the native execution when the forwarded body appears stable.

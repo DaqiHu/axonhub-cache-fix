@@ -61,9 +61,12 @@ and breaking prefix match.
 
 **Community**: [#64192](https://github.com/anthropics/claude-code/issues/64192) — fires repeatedly per long session, ~250 tokens per firing, no official suppression knob.
 
-**Fix**: `strip-empty-system` (order 47) — removes:
-- All empty system messages (any position)
-- Contentful system messages after the last user message
+**Fix**: `strip-empty-system` (order 47) removes empty system messages and only
+the two approved exact bookkeeping prefixes: deferred-tools availability and
+the task-tools inactivity reminder. Historical replay of those same approved
+messages is removed as well.
+
+It does not remove arbitrary contentful system messages after the last user.
 
 ## Pattern 6: content format churn
 
@@ -104,6 +107,25 @@ It does not inject unavailable tools, retain removed tools, or reuse old schemas
 
 **Isolation**: State is keyed by session, agent, model, and request family.
 Exact one-tool `web_search` requests are separated from conversation traffic.
+
+## Pattern 8: meaningful appended system events
+
+**Appearance**: Claude Code appends a `role:"system"` message containing one of:
+
+- worktree `CLAUDE.md` / `AGENTS.md` contents;
+- a user/linter file-change notice with the relevant diff;
+- `[SYSTEM NOTIFICATION - NOT USER INPUT]` background-task completion or failure.
+
+**Effect**: The old Anthropic and native messages can remain an exact prefix,
+but DeepSeek may reuse only older cache units while it constructs the new
+boundary. The first event request can be near 0%; the next stable request often
+recovers.
+
+**Policy**: These events affect the model's next action and must be preserved.
+They are classified as `appended-system`, not as a strip-extension failure.
+Optimization belongs upstream: shorten injected repository instructions, avoid
+unnecessarily large change notices, and do not launch latency-sensitive followup
+requests immediately after a large append when the workflow permits waiting.
 
 ## Why ~25% is the floor
 

@@ -14,6 +14,9 @@ const tests = [
   ["node", "test-runtime-validation.mjs"],
   ["node", "test-pipeline.mjs"],
   ["python", "test-cache-report.py"],
+  ["python", "test-analyze.py"],
+  ["python", "test-provider-report.py"],
+  ["python", "test-probe-docs.py"],
 ];
 
 let totalFailed = 0;

@@ -1,3 +1,3 @@
 display_name: E2E Cache Test
-short_description: Full end-to-end cache hit rate testing and iteration loop for axonhub-cache-fix
-default_prompt: Use $e2e-cache-test to run the test loop: restart cache-fix, run Claude Code, query DB, diagnose drops
+short_description: Benchmark DeepSeek cache changes with real Claude Code tools
+default_prompt: Use $e2e-cache-test to record a DB watermark, run a stable real-tool workload, and compare token-weighted uncached tokens

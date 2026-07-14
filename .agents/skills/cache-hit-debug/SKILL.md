@@ -1,100 +1,68 @@
 ---
 name: cache-hit-debug
-description: "Diagnose DeepSeek cache hit rate drops via AxonHub logs and request traces. Use when cache drops below 99%, or user mentions cache miss or prompt caching issues."
+description: "Use when DeepSeek cache hit rate drops, AxonHub shows sporadic cache misses, or a Claude Code request may have changed tools, system content, or message history."
 ---
 
 # Cache Hit Debug
 
-Diagnose DeepSeek cache hit rate drops in the AxonHub + cache-fix pipeline.
+Find the first changed prefix component before changing an extension.
 
-## Quick diagnostic
-
-```bash
-# Check current service status (includes extension health)
+```powershell
 scripts/start.ps1 -Status
-
-# Classify recent rows before inspecting individual misses
-python scripts/cache_report.py 10
-
-# Check cache-fix debug log for recent requests
-tail -50 ~/.claude/cache-fix-debug.log
+python scripts/cache_report.py 60 --low-only
 ```
 
-## Data sources
+For a bounded reproduction, add `--after-request-id <watermark>`; earlier
+lookback rows still seed conversation state but are not printed.
 
-### 1. AxonHub SQLite DB — fastest
-`~/axonhub/axonhub.db` stores all request data with cache metrics:
+The default report excludes foreign models and non-Anthropic formats, orders by
+`requests.created_at`, and uses lookback rows only as classifier state.
 
-```sql
--- All recent cache hit rates
-SELECT prompt_tokens, prompt_cached_tokens,
-       ROUND(CAST(prompt_cached_tokens AS REAL) / prompt_tokens * 100, 1) as hit_pct
-FROM usage_logs ORDER BY created_at DESC LIMIT 10;
+## Workflow
 
--- Find low-hit requests
-SELECT * FROM usage_logs
-WHERE CAST(prompt_cached_tokens AS REAL) / prompt_tokens < 0.5
-ORDER BY created_at DESC;
+1. Record request ID, session, agent, model, format, channel, and request time.
+2. Inspect the classified row and its adjacent request in AxonHub tracing.
+3. Compare forwarded Anthropic bodies and native execution bodies.
+4. Check tools, top-level `system`, overlapping messages, and appended messages
+   separately.
+5. Correlate with `~/axonhub/logs/*.log` before proposing a mutation.
+
+Downloaded bodies can live anywhere:
+
+```powershell
+python scripts/analyze.py --dir .\test-data "*Request_*.json"
 ```
 
-### 2. AxonHub tracing — richest detail
-Open http://localhost:8090 → Tracing → Requests.
-Each request shows the Anthropic-format body and response.
-Response `usage` contains `cache_read_input_tokens` and `input_tokens`.
+The analyzer sorts by numeric request ID and reports tool additions/removals,
+exact history growth, appended system count, and serialized growth size.
 
-```
-cache_read_input_tokens: 49664  ← tokens served from cache
-input_tokens: 99               ← tokens processed fresh
-hit rate ≈ cache_read / (cache_read + input) ≈ 99.8%
-```
+## Decision table
 
-Download request bodies and analyze:
+| Evidence | Conclusion |
+|---|---|
+| Existing tools moved or changed | `tool-order-hold` candidate |
+| Top-level system changed | Inspect billing header and upstream prompt changes |
+| Historical message changed | `prefix-hold` candidate; verify tool IDs first |
+| Approved deferred/task reminder | `strip-empty-system` should remove it |
+| Repository instructions, file diff notice, background-task event | Meaningful `appended-system`; preserve it |
+| Exact native prefix, large new tool result | Expected uncached growth/cache construction |
+| Exact native prefix, immediate next request recovers | Transient provider cache visibility |
 
-```bash
-python scripts/analyze.py
-```
+DeepSeek documents that cache construction takes seconds. A request launched a
+few hundred milliseconds after a large append can temporarily reuse only older
+prefix units even when the native request is an exact extension. A proxy cannot
+repair that after the response; adding a blanket delay would hurt latency and
+still provide no guarantee.
 
-### 3. Execution tracing — what DeepSeek actually received
-Request Execution view shows the native/OAI format body after AxonHub
-translation. Response contains `cached_tokens` in OpenAI format.
+Extension logs:
 
-### 4. Extension logs — what our proxy modified
-Deployed logs are at `~/axonhub/logs/`:
+| File | Evidence |
+|---|---|
+| `prefix-hold.log` | Historical content restoration |
+| `strip-trailing-empty-system.log` | Approved bookkeeping removals |
+| `deepseek-cache-optimize.log` | DeepSeek `cache_control` stripping |
+| `strip-billing-header.log` | Billing nonce removal |
+| `tool-order-hold.log` | Tool baselines and reorder events |
 
-| Log | Extension | What it tracks |
-|-----|-----------|----------------|
-| `prefix-hold.log` | order 46 | Content restored/stabilized |
-| `strip-empty-system.log` | order 47 | System messages removed |
-| `deepseek-cache.log` | order 48 | cache_control fields stripped |
-| `strip-billing-header.log` | order 85 | Billing headers removed |
-| `tool-order-hold.log` | order 210 | Tool-order baselines and reorders |
-
-### 5. cache-fix debug log
-`~/.claude/cache-fix-debug.log` (requires `CACHE_FIX_DEBUG=1`)
-
-## Diagnosis workflow
-
-1. **Classify recent requests**: `python scripts/cache_report.py 10`
-2. **Identify actionable rows**: prioritize `tools-changed`, `system-changed`,
-   and `history-changed`; do not treat search workers or cold starts as the same bug
-3. **Download body**: Save request-body JSON to `test-data/`
-4. **Compare consecutive requests**: `python scripts/analyze.py`
-5. **Check key metrics**:
-   - `cc=0` — cache_control stripped correctly? If not, deepseek-cache-optimize may have failed
-   - `trailing_sys=0` — empty system messages removed? If not, strip-empty-system may have missed a format variant
-   - `first_msg=None` — overlapping messages byte-identical? If not, content differs between requests
-   - `first_byte=X%` — raw byte prefix match percentage
-6. **Cross-reference with extension logs**: Did the relevant extension run at the expected time?
-
-## Known patterns → fix mapping
-
-| Observe | Root cause | Extension responsible |
-|---------|-----------|----------------------|
-| billing header in system array | Nonce `cch=` changes per request | strip-billing-header |
-| `cache_control` fields present | JSON diff breaks DeepSeek prefix | deepseek-cache-optimize |
-| user text replaced by empty `[]` | Claude Code "eats" previous turn text | prefix-hold |
-| system msg injected every ~5 turns | Task tools reminder (#64192) | strip-empty-system |
-| existing tools move when new names appear | Whole-array alphabetical sort | tool-order-hold |
-| one message and exact tool `web_search` | Standalone internal search request | Expected separate request family |
-| first low request for a new agent | Cold cache prefix | Expected cold-first |
-| lower hit with exact prefix plus new content | Cache construction timing or uncached growth | Measure weighted uncached tokens |
+Never infer root cause from percentage alone. Never strip unknown system text to
+raise a metric.

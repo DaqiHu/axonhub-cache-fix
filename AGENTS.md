@@ -78,16 +78,19 @@ All extensions must:
 
 ### Analyzing with Python
 ```bash
-python scripts/analyze.py "*Request_*.json"
+python scripts/analyze.py --dir ./test-data "*Request_*.json"
+python scripts/cache_report.py 60 --low-only
 ```
 
 Key diagnostics:
 - `cc=0` confirms cache_control stripping works
-- `trailing_sys=0` confirms system message removal
-- `first_msg=None` means all overlapping msgs byte-identical
-- `first_byte=X%` shows prefix match percentage
-- `python scripts/cache_report.py` separates expected cold/search rows from
-  `tools-changed`, `system-changed`, and `history-changed` prefix mutations.
+- `history_prefix=True` means all overlapping messages are unchanged
+- `first_msg=None` means no overlapping message changed
+- `tools_added` / `tools_removed` expose dynamic inventory transitions
+- `appended_system=N` requires inspection of the exact new system text
+- `growth=+N/Xc` separates small growth from large uncached content
+- `cache_report.py` defaults to DeepSeek Anthropic traffic, orders by request
+  creation time, and uses lookback rows only as classifier state.
 
 ## Cache hit rate investigation
 
@@ -100,6 +103,17 @@ Key diagnostics:
 3. **AxonHub tracing** → Response body has `usage.cache_read_input_tokens`
 4. **cache-fix debug log** → `~/.claude/cache-fix-debug.log` (requires `CACHE_FIX_DEBUG=1`)
 
+Start with the read-only classified reports:
+
+```powershell
+python scripts/cache_report.py 60 --low-only
+python scripts/cache_report.py 60 --summary
+```
+
+Do not mix models or formats silently. The default filter is `deepseek%` plus
+`anthropic/messages`. Use `--all-models --all-formats` only for an explicit
+cross-provider audit. Category summaries are token-weighted.
+
 ### Known cache drop patterns
 
 | Symptom | Root cause | Fix extension |
@@ -108,11 +122,14 @@ Key diagnostics:
 | 13-26% hit on injection requests | Deferred-tools or task-tools system reminder | strip-empty-system |
 | ~82% hit after injection | prefix-hold restored most but some boundary change | prefix-hold (partial) |
 | 1-9% exactly when tools appear | Existing tools moved after full-array sort | tool-order-hold |
+| 0-10% with `appended-system` | Worktree instructions, file diff, or background-task event | Preserve; expected semantic growth |
+| lower hit with `large-growth` | Large tool result/skill text appended to exact prefix | Measure growth; usually expected |
 | 99.99% hit | Clean state | — |
 
 Do not infer a root cause from hit percentage alone. Use the classified report
-and inspect adjacent request bodies. `standalone-web-search`, `cold-first`, and
-large `clean-growth` rows are not automatically extension failures. Compare
+and inspect adjacent request bodies. `standalone-web-search`, `cold-first`,
+`appended-system`, `large-growth`, and `clean-growth` rows are not automatically
+extension failures. Compare
 categories with token-weighted rates, not request-count averages.
 
 ### Semantic boundary
@@ -121,6 +138,12 @@ periodically injects system reminders. The extension removes only the two
 approved bookkeeping prefixes, including their historical replay on later
 requests. Meaningful or unknown system content must be preserved even when
 that means a cache miss.
+
+Current meaningful examples include worktree `CLAUDE.md` / `AGENTS.md`
+contents, user/linter file-change notices with diffs, and
+`[SYSTEM NOTIFICATION - NOT USER INPUT]` background-task completion/failure
+events. They are classified as `appended-system`; do not broaden the strip
+allowlist to include them.
 
 ## Conversation patterns observed
 
@@ -131,6 +154,9 @@ that means a cache miss.
 - Empty system: `{role:"system", content:[]}`
 - Deferred-tools reminder: `{role:"system", content:"The following deferred tools are now available..."}`
 - System reminder: `{role:"system", content:"The task tools haven't been used recently..."}`
+- Worktree instructions: `{role:"system", content:"Contents of .../AGENTS.md: ..."}`
+- File-change notice: `{role:"system", content:"Note: ... was modified..."}`
+- Background event: `{role:"system", content:"[SYSTEM NOTIFICATION - NOT USER INPUT]..."}`
 
 ### Content format variations
 Claude Code varies string vs array format for `content` between requests.
@@ -165,11 +191,12 @@ When a new cache drop pattern emerges:
    - Key terms: "prompt cache", "system reminder", "billing header", "context injection"
 2. **Search gists and forums**: GitHub Gist, Reddit r/ClaudeCode, Discord
 3. **Read Claude Code changelogs**: look for new system prompts, auto-injections, or context management changes
-4. **Diff request bodies**: `python scripts/analyze.py` on consecutive requests to find what changed
-5. **Check DeepSeek API docs**: verify caching behavior hasn't changed on their side
-6. **Compare tool inventories and order**: verify definitions already present in
+4. **Classify first**: `python scripts/cache_report.py 60 --low-only`
+5. **Diff request bodies**: `python scripts/analyze.py --dir <dir>` on consecutive request IDs
+6. **Check DeepSeek API docs**: verify caching behavior hasn't changed on their side
+7. **Compare tool inventories and order**: verify definitions already present in
    request N retain their relative order in request N+1; list additions and removals
-7. **Check protocol pairing**: every assistant `tool_use.id` must have a following
+8. **Check protocol pairing**: every assistant `tool_use.id` must have a following
    user `tool_result.tool_use_id`; never repair cache by crossing those identities
 
 When you find a community-reported but unfixed issue (like #64192),
@@ -196,6 +223,13 @@ a previously stable category regresses:
    only when it preserves request semantics for every model.
 7. Deploy through `scripts/setup.ps1`, require zero load failures, restart only
    the proxy, and compare token-weighted uncached tokens before and after.
+
+For Codex Responses provider probes, run a deliberate tool-required prompt after
+a DB watermark, then use
+`python scripts/provider_report.py 30 --after-request-id <watermark> --expect-tool`.
+The report is read-only. HTTP success without `custom_tool_call` is semantic
+incompatibility only when the prompt explicitly required a tool; otherwise it is
+`no-tool-call`.
 
 If Anthropic changes tool names, tool schema shape, session/agent headers, or
 the one-tool web-search request format, review `tool-order-hold` state-key and

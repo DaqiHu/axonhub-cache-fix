@@ -1,116 +1,64 @@
 ---
 name: e2e-cache-test
-description: "End-to-end cache hit rate testing loop for axonhub-cache-fix. Use when the user wants to test cache performance, verify a fix, run a benchmark, or iterate on extensions. Trigger: test cache, run benchmark, e2e test, verify cache, quick test."
+description: "Use when benchmarking axonhub-cache-fix, verifying a cache change with real Claude Code tool calls, or comparing DeepSeek uncached token consumption before and after a fix."
 ---
 
 # End-to-End Cache Test
 
-## Quick test loop
+Use a database watermark and one model/request family per run. Do not evaluate a
+DeepSeek change from a report that also contains Codex or other providers.
 
-```
-1. Restart cache-fix  →  scripts/start.ps1 (AxonHub skips if already running)
-2. Run Claude Code    →  claude -p "quick test prompt"
-3. Query DB           →  python scripts/cache_report.py
-4. Diagnose drops     →  check extension logs, download request bodies
-5. Fix & repeat       →  modify extension, goto 1
-```
-
-## Step 1: Restart cache-fix only
-
-Kill and restart cache-fix without touching AxonHub:
+## 1. Verify runtime
 
 ```powershell
-# Kill only the cache-fix proxy process
-Get-CimInstance Win32_Process |
-  Where-Object { $_.Name -eq "node.exe" -and $_.CommandLine -like "*claude-code-cache-fix*proxy*server.mjs*" } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-
-# Restart (AxonHub already running → auto-skip)
-scripts/start.ps1
-scripts/start.ps1 -Status   # verify runtime: VALID and /health: ok
+scripts/start.ps1 -Status
 ```
 
-## Step 2: Run test prompt
+Require runtime `VALID`, zero extension load failures, and proxy `/health: ok`.
+Restart only the proxy when deployment requires it; its in-memory state then
+starts from a new baseline.
 
-Minimal Claude Code prompt that triggers tool calls with text responses
-(both tool-only and text-output patterns to verify cache handling):
+## 2. Record the watermark
 
-```bash
-claude -p "严格串行执行6次 Bash 工具调用。一次只能调用一个 Bash，命令依次为 echo 1、echo 2、echo 3、echo 4、echo 5、echo 6。每次必须等待该次工具结果返回，然后先输出一句简短中文说明，再发起下一次 Bash。禁止并行调用，禁止在同一轮调用多个工具，不要使用其他工具。"
+```powershell
+python -c "import sqlite3,pathlib; c=sqlite3.connect(pathlib.Path.home()/'axonhub'/'axonhub.db'); print(c.execute('select coalesce(max(id),0) from requests').fetchone()[0])"
 ```
 
-This produces alternating tool-call and text-response patterns.
+## 3. Run a short real-tool workload
 
-For fastest iteration:
-```bash
-claude -p "echo 1-3 via Bash, each with a brief comment"
+```powershell
+claude -p --model deepseek-v4-flash "Use Bash serially three times: echo 1, echo 2, echo 3. Wait for each result before the next."
 ```
 
-## Step 3: Query cache data
+Use a fresh session for before/after comparisons. Keep prompt, model, tool
+sequence, proxy state, and provider channel constant.
 
-```bash
-python -c "
-import sqlite3
-conn = sqlite3.connect(r'C:\Users\hudaq\axonhub\axonhub.db')
-rows = conn.execute('''
-    SELECT id, prompt_tokens, prompt_cached_tokens,
-           ROUND(CAST(prompt_cached_tokens AS REAL)/prompt_tokens*100,1) as pct,
-           created_at
-    FROM usage_logs
-    WHERE created_at > datetime('now', '-10 minutes')
-    ORDER BY created_at
-''').fetchall()
-if not rows:
-    print('No data in last 10 min')
-else:
-    for r in rows:
-        flag = ' <<<' if r[3] < 90 else ''
-        print(f'#{r[0]}: hit={r[2]}/{r[1]} ={r[3]:>5.1f}%{flag}')
-conn.close()
-"
+## 4. Measure and diagnose
+
+```powershell
+python scripts/cache_report.py 10 --after-request-id <watermark> --model "deepseek-v4-flash" --low-only
+python scripts/cache_report.py 10 --after-request-id <watermark> --model "deepseek-v4-flash" --summary
 ```
 
-Or use `scripts/cache_report.py`:
-```bash
-python scripts/cache_report.py
+Acceptance is based on both protocol correctness and token-weighted uncached
+tokens. A stable-tool sequence should have a cold baseline followed by high-hit
+growth. A row may legitimately be lower when Claude Code appends a large tool
+result, repository instructions, a file-change notice, or a background-task
+event; classify it before treating it as failure.
+
+For every low row after the watermark:
+
+- `tools-changed`, `top-system-changed`, or `history-changed`: investigate.
+- `appended-system`: inspect text; preserve meaningful/unknown content.
+- `large-growth`: measure new chars/tokens and confirm old native prefix is exact.
+- `clean-growth`: check request timing and whether the next request recovers.
+
+Download suspicious adjacent bodies and run:
+
+```powershell
+python scripts/analyze.py --dir .\test-data "*Request_*.json"
 ```
 
-## Step 4: Expected results
-
-| Request # | Expected hit rate | Meaning |
-|-----------|-------------------|---------|
-| 1 | 0-30% | Cold start — no cache yet |
-| 2+ | 99%+ | All subsequent should hit cache |
-
-Any request after the first below 99% fails acceptance and must be diagnosed
-from the exact new AxonHub request rows.
-
-If any request after #1 is below 90%, download the request bodies:
-
-```bash
-# Download from http://localhost:8090 → Tracing
-# Save to Downloads/, then:
-python scripts/analyze.py "*Request_*.json"
-```
-
-## Step 5: Iterate
-
-After modifying an extension:
-1. Restart cache-fix (Step 1)
-2. Re-run test (Step 2)
-3. Check results (Step 3)
-4. Compare: did the low-hit pattern change?
-
-## Before/after comparison
-
-After a fix, compare the request count of <90% hits:
-
-```python
-# Before fix
->>> 6 requests: [99%, 25%, 99%, 25%, 99%, 25%]  # 3 drops
-
-# After fix
->>> 6 requests: [30%, 99%, 99%, 99%, 99%, 99%]  # 1 cold start only
-```
-
-The goal: only the first request (cold start) should miss cache. All others at 99%+.
+The before/after report must include request IDs, watermark, model, channel,
+classification, weighted cached/total tokens, uncached-token reduction, and any
+protocol errors. Do not claim improvement from request-count averages.

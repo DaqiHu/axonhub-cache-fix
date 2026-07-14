@@ -1,3 +1,3 @@
 display_name: Cache Hit Debug
-short_description: Diagnose root causes of low DeepSeek cache hit rates using logs and request traces
-default_prompt: Use $cache-hit-debug to trace the root cause of a cache miss and identify which extension handles it
+short_description: Diagnose DeepSeek misses from exact adjacent request traces
+default_prompt: Use $cache-hit-debug to classify a miss, compare forwarded and native prefixes, and decide whether it is actionable

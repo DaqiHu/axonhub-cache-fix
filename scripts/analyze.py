@@ -1,162 +1,249 @@
-import json, sys
+"""Analyze downloaded AxonHub request bodies in deterministic request order."""
+
+import argparse
+import json
+import re
+import sys
 from pathlib import Path
 
-D = Path(r'D:\Users\hudaq\Downloads')
 
-def find_requests(pattern="*Request_*.json"):
-    """Find all request body files"""
-    return sorted(D.glob(pattern), key=lambda p: p.stat().st_mtime)
+REQUEST_ID_RE = re.compile(r"(?:Request[_ -]?|request[_ -]?)(\d+)", re.IGNORECASE)
 
-def analyze_pair(req_path, resp_path=None):
-    """Analyze a single request+response pair"""
-    with open(req_path, encoding='utf-8') as f:
-        req = json.load(f)
-    
-    msgs = req.get('messages', [])
-    
-    # Count cache_control markers
-    cc = 0
-    for s in req.get('system', []):
-        if s.get('cache_control'): cc += 1
-    for m in msgs:
-        if isinstance(m.get('content'), list):
-            for b in m['content']:
-                if b.get('cache_control'): cc += 1
-    
-    # Find last user msg
-    last_user = None
-    for i in range(len(msgs) - 1, -1, -1):
-        if msgs[i].get('role') == 'user':
-            last_user = i
-            break
-    
-    sys_in = len([m for m in msgs if m.get('role') == 'system'])
-    
-    # Check for trailing empty system
-    trailing_sys = 0
-    for i in range(len(msgs) - 1, last_user if last_user is not None else 0, -1):
-        if msgs[i].get('role') == 'system' and msgs[i].get('content') == []:
-            trailing_sys += 1
+
+def request_id(path):
+    match = REQUEST_ID_RE.search(path.stem)
+    if match:
+        return int(match.group(1))
+    numbers = re.findall(r"\d+", path.stem)
+    return int(numbers[-1]) if numbers else -1
+
+
+def find_requests(directory, pattern="*Request_*.json"):
+    return sorted(Path(directory).glob(pattern), key=lambda path: (request_id(path), path.name))
+
+
+def find_response(directory, rid):
+    candidates = [
+        path
+        for path in Path(directory).glob("*.json")
+        if request_id(path) == rid and "response" in path.name.lower()
+    ]
+    return sorted(candidates, key=lambda path: path.name)[0] if candidates else None
+
+
+def _load(path):
+    with open(path, encoding="utf-8") as handle:
+        value = json.load(handle)
+    if isinstance(value, dict) and "request_body" in value:
+        body = value["request_body"]
+        if isinstance(body, str):
+            body = json.loads(body)
+        if isinstance(body, dict):
+            metadata = {
+                "format": value.get("format"),
+                "channel": value.get("channel_id"),
+                "provider": value.get("provider") or value.get("channel_name"),
+            }
+            return body, metadata
+    if isinstance(value, dict) and "response_body" in value:
+        body = value["response_body"]
+        if isinstance(body, str):
+            body = json.loads(body)
+        if isinstance(body, dict):
+            return body, {}
+    return value, {}
+
+
+def _canonical(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _tool_names(body):
+    tools = body.get("tools", []) if isinstance(body, dict) else []
+    return [
+        tool.get("name")
+        for tool in tools
+        if isinstance(tool, dict) and isinstance(tool.get("name"), str)
+    ]
+
+
+def _count_cache_control(value):
+    if isinstance(value, dict):
+        return int("cache_control" in value) + sum(
+            _count_cache_control(item) for item in value.values()
+        )
+    if isinstance(value, list):
+        return sum(_count_cache_control(item) for item in value)
+    return 0
+
+
+def infer_format(body):
+    if not isinstance(body, dict):
+        return "unknown"
+    if "input" in body:
+        return "openai/responses"
+    if "system" in body and "messages" in body:
+        return "anthropic/messages"
+    if "messages" in body:
+        return "openai/chat_completions"
+    return "unknown"
+
+
+def cache_stats(usage):
+    if not isinstance(usage, dict):
+        return None
+    if "cache_read_input_tokens" in usage:
+        cached = int(usage.get("cache_read_input_tokens") or 0)
+        uncached = int(usage.get("input_tokens") or 0)
+        created = int(usage.get("cache_creation_input_tokens") or 0)
+        total = cached + created + uncached
+    else:
+        cached = int(
+            (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+            or usage.get("prompt_cache_hit_tokens")
+            or 0
+        )
+        total = int(usage.get("prompt_tokens") or 0)
+    rate = cached / total * 100 if total else 0.0
+    return cached, total, round(rate, 1)
+
+
+def analyze_request(req_path, resp_path=None):
+    req, metadata = _load(req_path)
+    messages = req.get("messages", []) if isinstance(req, dict) else []
+    system_messages = [
+        message
+        for message in messages
+        if isinstance(message, dict) and message.get("role") == "system"
+    ]
+    trailing_system = 0
+    for message in reversed(messages):
+        if isinstance(message, dict) and message.get("role") == "system":
+            trailing_system += 1
         else:
             break
-    
+
     result = {
-        'rid': req_path.stem.split('_')[-1],
-        'msgs': len(msgs),
-        'cc': cc,
-        'last_user': last_user,
-        'sys_in': sys_in,
-        'trailing_sys': trailing_sys,
-        'model': req.get('model', '?'),
-        'size': req_path.stat().st_size,
+        "rid": request_id(req_path),
+        "messages": len(messages),
+        "cc": _count_cache_control(req),
+        "system_messages": len(system_messages),
+        "trailing_system": trailing_system,
+        "model": req.get("model", "?") if isinstance(req, dict) else "?",
+        "format": metadata.get("format") or infer_format(req),
+        "channel": metadata.get("channel"),
+        "provider": metadata.get("provider"),
+        "tools": _tool_names(req),
+        "size": req_path.stat().st_size,
     }
-    
-    # Last 4 messages
-    tail = []
-    for i in range(max(0, len(msgs) - 4), len(msgs)):
-        m = msgs[i]
-        types = [b.get('type', '?') for b in m['content']] if isinstance(m.get('content'), list) else []
-        txt = ''
-        if isinstance(m.get('content'), list) and m['content']:
-            for b in m['content']:
-                t = b.get('text', '') or str(b.get('content', ''))
-                if t.strip():
-                    txt = ' | ' + t.strip()[:40]
-                    break
-        tail.append("  [%d] %-6s %s%s" % (i, m['role'], str(types)[:35], txt))
-    result['tail'] = tail
-    
-    # Response cache stats
     if resp_path and resp_path.exists():
-        with open(resp_path, encoding='utf-8') as f:
-            resp = json.load(f)
-        usage = resp.get('usage', {})
-        result['cache_hit'] = usage.get('cache_read_input_tokens', usage.get('prompt_cache_hit_tokens', None))
-        result['input'] = usage.get('input_tokens', usage.get('prompt_tokens', None))
-        hit = result['cache_hit']
-        inp = result['input']
-        if hit is not None and inp is not None:
-            result['hit_rate'] = hit / (hit + (inp if inp > hit else 0)) * 100 if inp > 1 else 99.9
-    
+        response, _ = _load(resp_path)
+        stats = cache_stats(response.get("usage", {}) if isinstance(response, dict) else {})
+        if stats:
+            result["cache"] = stats
     return result
 
-def compare_requests(r1_path, r2_path):
-    """Compare two consecutive requests byte-by-byte"""
-    with open(r1_path, encoding='utf-8') as f:
-        raw1 = f.read()
-        b1 = json.loads(raw1)
-    with open(r2_path, encoding='utf-8') as f:
-        raw2 = f.read()
-        b2 = json.loads(raw2)
-    
-    # First byte diff
-    first_byte = None
-    for k in range(min(len(raw1), len(raw2))):
-        if raw1[k] != raw2[k]:
-            first_byte = k
-            break
-    pct = first_byte / len(raw1) * 100 if first_byte else 100
-    
-    # First msg diff
-    msgs1, msgs2 = b1['messages'], b2['messages']
-    first_msg = None
-    for i in range(min(len(msgs1), len(msgs2))):
-        if json.dumps(msgs1[i], ensure_ascii=False, sort_keys=True) != \
-           json.dumps(msgs2[i], ensure_ascii=False, sort_keys=True):
-            first_msg = i
-            break
-    
-    sys_same = json.dumps(b1.get('system', []), ensure_ascii=False, sort_keys=True) == \
-               json.dumps(b2.get('system', []), ensure_ascii=False, sort_keys=True)
-    tools_same = json.dumps(b1.get('tools', []), ensure_ascii=False, sort_keys=True) == \
-                 json.dumps(b2.get('tools', []), ensure_ascii=False, sort_keys=True)
-    
+
+def compare_requests(first_path, second_path):
+    with open(first_path, encoding="utf-8") as handle:
+        raw1 = handle.read()
+    with open(second_path, encoding="utf-8") as handle:
+        raw2 = handle.read()
+    first, _ = _load(first_path)
+    second, _ = _load(second_path)
+
+    first_byte = next(
+        (index for index, pair in enumerate(zip(raw1, raw2)) if pair[0] != pair[1]),
+        None,
+    )
+    byte_prefix = (
+        min(len(raw1), len(raw2)) if first_byte is None else first_byte
+    )
+    first_messages = first.get("messages", [])
+    second_messages = second.get("messages", [])
+    first_message = next(
+        (
+            index
+            for index in range(min(len(first_messages), len(second_messages)))
+            if _canonical(first_messages[index]) != _canonical(second_messages[index])
+        ),
+        None,
+    )
+    history_prefix = (
+        len(second_messages) >= len(first_messages)
+        and second_messages[: len(first_messages)] == first_messages
+    )
+    appended = second_messages[len(first_messages):] if history_prefix else []
+    first_tools = _tool_names(first)
+    second_tools = _tool_names(second)
+
     return {
-        'first_byte': first_byte,
-        'pct': pct,
-        'first_msg': first_msg,
-        'sys_same': sys_same,
-        'tools_same': tools_same,
-        'growth': len(msgs2) - len(msgs1),
-        'size1': len(raw1),
-        'size2': len(raw2),
+        "first_byte": first_byte,
+        "byte_prefix_pct": byte_prefix / len(raw1) * 100 if raw1 else 100.0,
+        "first_message": first_message,
+        "history_prefix": history_prefix,
+        "top_system_same": _canonical(first.get("system")) == _canonical(second.get("system")),
+        "tools_same": _canonical(first.get("tools", [])) == _canonical(second.get("tools", [])),
+        "tools_added": [name for name in second_tools if name not in first_tools],
+        "tools_removed": [name for name in first_tools if name not in second_tools],
+        "growth": len(second_messages) - len(first_messages),
+        "growth_chars": sum(len(_canonical(message)) for message in appended),
+        "appended_system": sum(
+            1
+            for message in appended
+            if isinstance(message, dict) and message.get("role") == "system"
+        ),
     }
 
 
-if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        pattern = sys.argv[1]
-    else:
-        pattern = "*axonhub_*Request*"
-    
-    files = find_requests(pattern)
+def parse_args(argv):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("patterns", nargs="*", default=["*Request_*.json"])
+    parser.add_argument("--dir", type=Path, default=Path.cwd())
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    patterns = args.patterns or ["*Request_*.json"]
+    files = []
+    for pattern in patterns:
+        files.extend(find_requests(args.dir, pattern))
+    files = sorted(set(files), key=lambda path: (request_id(path), path.name))
     if not files:
-        print("No files found for pattern:", pattern)
-        sys.exit(1)
-    
-    print("=== Request Analysis ===\n")
-    results = []
-    for f in files:
-        rid_suffix = f.stem.split('_')[-1]
-        resp_files = list(D.glob(f"*{rid_suffix}*response*"))
-        resp_file = resp_files[0] if resp_files else None
-        r = analyze_pair(f, resp_file)
-        results.append(r)
-    
-    for r in results:
-        print("%s: %dmsgs cc=%d last_user=msg[%d] sys_in=%d trailing_sys=%d model=%s" % (
-            r['rid'], r['msgs'], r['cc'], r['last_user'], r['sys_in'], r['trailing_sys'], r['model']))
-        for t in r['tail']:
-            print(t)
-        if 'hit_rate' in r:
-            print("  cache: hit=%s input=%s rate=%.1f%%" % (r.get('cache_hit','?'), r.get('input','?'), r['hit_rate']))
-        print()
-    
-    # Consecutive comparison
-    print("\n=== Byte-level comparison ===\n")
-    for i in range(len(files) - 1):
-        c = compare_requests(files[i], files[i+1])
-        r1 = Path(files[i]).stem.split('_')[-1]
-        r2 = Path(files[i+1]).stem.split('_')[-1]
-        print("%s->%s: first_byte=%s (%.1f%%) first_msg=%s sys_same=%s tools_same=%s growth=%+d" % (
-            r1, r2, c['first_byte'], c['pct'], c['first_msg'], c['sys_same'], c['tools_same'], c['growth']))
+        print(f"No request files in {args.dir} for: {', '.join(patterns)}")
+        return 1
+
+    print("=== Request Analysis ===")
+    for path in files:
+        result = analyze_request(path, find_response(args.dir, request_id(path)))
+        scope = f"model={result['model']} format={result['format']}"
+        if result["channel"] is not None:
+            scope += f" channel={result['channel']}"
+        print(
+            f"{result['rid']}: msgs={result['messages']} cc={result['cc']} "
+            f"system={result['system_messages']} trailing_system={result['trailing_system']} "
+            f"tools={len(result['tools'])} {scope}"
+        )
+        if "cache" in result:
+            cached, total, rate = result["cache"]
+            print(f"  cache={cached}/{total} {rate:.1f}%")
+
+    print("\n=== Consecutive Comparison ===")
+    for first, second in zip(files, files[1:]):
+        result = compare_requests(first, second)
+        print(
+            f"{request_id(first)}->{request_id(second)}: "
+            f"byte_prefix={result['byte_prefix_pct']:.1f}% "
+            f"first_msg={result['first_message']} history_prefix={result['history_prefix']} "
+            f"top_system_same={result['top_system_same']} tools_same={result['tools_same']} "
+            f"added={','.join(result['tools_added']) or '-'} "
+            f"removed={','.join(result['tools_removed']) or '-'} "
+            f"growth={result['growth']:+d}/{result['growth_chars']}c "
+            f"appended_system={result['appended_system']}"
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
