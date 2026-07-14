@@ -9,6 +9,7 @@ const REQUIRED_EXTENSIONS = [
   "tool-order-hold",
   "strip-billing-header",
   "upstream-error-body-log",
+  "low-cache-trace",
 ];
 
 async function requirePath(path, label, expectedType) {

@@ -81,6 +81,7 @@ try {
       "tool-order-hold",
       "strip-billing-header",
       "upstream-error-body-log",
+      "low-cache-trace",
     ]) {
       assert.equal(summary.loaded.includes(name), true, `${name} loaded`);
     }
