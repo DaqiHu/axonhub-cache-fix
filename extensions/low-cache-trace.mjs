@@ -65,7 +65,7 @@ export function getThreshold() {
   return Number.isFinite(n) ? Math.round(n) : DEFAULT_THRESHOLD;
 }
 
-function getRetentionDays() {
+export function getRetentionDays() {
   const raw = process.env[ENV_RETENTION_DAYS];
   if (raw === undefined || raw === "") return DEFAULT_RETENTION_DAYS;
   const n = Number(raw);
@@ -231,8 +231,10 @@ async function appendRecord(record, now) {
     await mkdir(dir, { recursive: true }).catch(() => {});
     await appendFile(path, JSON.stringify(record) + "\n");
   });
-  // Fire-and-forget retention sweep (not awaited, throttled internally)
-  retentionSweep({ dir: logDir(), retentionDays: getRetentionDays() }).catch(() => {});
+  // Fire-and-forget retention sweep (not awaited, throttled internally).
+  // Pass dt (same timestamp used for the archive path) so the sweep cutoff
+  // aligns with the archive date even near the UTC midnight boundary.
+  retentionSweep({ dir: logDir(), retentionDays: getRetentionDays(), now: dt }).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
