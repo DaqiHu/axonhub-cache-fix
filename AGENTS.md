@@ -185,6 +185,32 @@ contents, user/linter file-change notices with diffs, and
 events. They are classified as `appended-system`; do not broaden the strip
 allowlist to include them.
 
+### Low-cache request archive
+
+A fail-open archive at `~/axonhub/logs/low-cache-requests/YYYY-MM-DD.jsonl`
+(UTC daily files) records requests whose Anthropic hit rate is strictly below
+80%. The `low-cache-trace` extension (order 900, gated by
+`CACHE_FIX_LOW_CACHE_TRACE=on`) produces the archive.
+
+The hit rate formula is:
+
+```
+cache_read_input_tokens / (input_tokens + cache_creation_input_tokens + cache_read_input_tokens)
+```
+
+Only requests with `usage` containing cache fields and denominator above zero
+are considered. Retention is 7 days, controlled by
+`CACHE_FIX_LOW_CACHE_TRACE_RETENTION_DAYS` (default 7).
+`scripts/runtime-health.ps1` reports the aggregate archive size.
+
+The JSONL is self-contained; read it directly to inspect records. Each record
+holds the complete post-extension Anthropic request body (without
+authorization or API key headers). The archive cannot observe AxonHub's
+translated native DeepSeek request — disabling AxonHub request-body tracing
+preserves Claude Code and cache-fix prefix evidence but loses the
+translation-layer body evidence. A write failure never blocks or mutates the
+original request or response.
+
 ## Conversation patterns observed
 
 ### Claude Code message formats

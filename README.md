@@ -260,6 +260,41 @@ The provider report is read-only and never sends paid requests. Without
 `--expect-tool`, a completed response without `custom_tool_call` is only
 `no-tool-call`, not enough evidence to declare incompatibility.
 
+### Low-cache request archive
+
+Requests with a low Anthropic cache hit rate are recorded to an independent
+fail-open JSONL archive at `~/axonhub/logs/low-cache-requests/YYYY-MM-DD.jsonl`
+(UTC daily files). The archive is produced by the `low-cache-trace` extension
+(order 900, gated by `CACHE_FIX_LOW_CACHE_TRACE=on`).
+
+Only requests whose `usage` contains Anthropic cache fields and whose hit rate
+is strictly below 80% are recorded. The hit rate formula is:
+
+```
+cache_read_input_tokens / (input_tokens + cache_creation_input_tokens + cache_read_input_tokens)
+```
+
+Retention is 7 days; files older than
+`CACHE_FIX_LOW_CACHE_TRACE_RETENTION_DAYS` (default 7) are cleaned on startup.
+`scripts/runtime-health.ps1` reports the aggregate archive size.
+
+Inspect records by reading the self-contained JSONL directly:
+
+```powershell
+Get-Content ~/axonhub/logs/low-cache-requests/<date>.jsonl
+python -c "import json,sys; [print(json.loads(l)['hit_pct'], json.loads(l)['model']) for l in sys.stdin]" < <file>
+```
+
+Each record contains the complete post-extension Anthropic request body (without
+authorization or API key headers). Because the archive records the final
+Anthropic body sent from cache-fix to AxonHub, it cannot observe AxonHub's
+translated native DeepSeek request. Disabling AxonHub request-body tracing
+preserves Claude Code and cache-fix prefix evidence but loses the
+translation-layer body evidence.
+
+The archive is fail-open: a write failure never blocks or mutates the original
+request or response.
+
 ### Why sporadic low rows remain
 
 DeepSeek states that cache construction takes seconds. Real traces show three

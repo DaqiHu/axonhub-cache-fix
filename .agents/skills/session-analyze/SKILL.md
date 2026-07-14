@@ -54,3 +54,12 @@ Cache formulas differ by response family:
 Do not use the old ambiguous formula or infer a cache break from raw JSON key
 order alone. Provider caching depends on the translated token prefix; compare
 the native execution when the forwarded body appears stable.
+
+## Low-cache request archive
+
+Requests with a hit rate strictly below 80% are recorded to
+`~/axonhub/logs/low-cache-requests/YYYY-MM-DD.jsonl` (UTC daily files) by the
+`low-cache-trace` extension (order 900, gated by `CACHE_FIX_LOW_CACHE_TRACE=on`).
+The archive is fail-open and retains 7 days of records. See README.md for the
+formula, retention variables, inspection commands, and native-translation
+limitation.
