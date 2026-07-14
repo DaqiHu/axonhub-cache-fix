@@ -112,6 +112,25 @@ await test("classifyUsage: only cache_creation present → written (hitPct=0)", 
   assert.equal(r.hitPct, 0);
 });
 
+await test("classifyUsage: cache fields as null → not written (treated as absent)", () => {
+  const r1 = module.classifyUsage(
+    { input_tokens: 100, cache_read_input_tokens: null, cache_creation_input_tokens: null },
+    80,
+  );
+  assert.equal(r1.shouldRecord, false, "both null → skip");
+  assert.equal(r1.hitPct, null);
+});
+
+await test("classifyUsage: one cache field null, other numeric → uses numeric value", () => {
+  // cache_read is null (absent), cache_creation is 50 (present) → we have partial cache info
+  const r = module.classifyUsage(
+    { input_tokens: 100, cache_read_input_tokens: null, cache_creation_input_tokens: 50 },
+    80,
+  );
+  assert.equal(r.shouldRecord, true, "cache_creation present → can record");
+  assert.equal(r.hitPct, 0, "null read treated as 0 → hitPct=0");
+});
+
 // ===================================================================
 // getThreshold — env-var parsing
 // ===================================================================

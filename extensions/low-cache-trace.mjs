@@ -91,8 +91,8 @@ export function classifyUsage(usage, threshold) {
   const cc = usage.cache_creation_input_tokens;
   const it = usage.input_tokens;
 
-  // Both cache fields absent → skip (treat as "unknown usage")
-  if (cr === undefined && cc === undefined) {
+  // Both cache fields absent (undefined or null) → skip
+  if ((cr === undefined || cr === null) && (cc === undefined || cc === null)) {
     return { hitPct: null, shouldRecord: false };
   }
 
