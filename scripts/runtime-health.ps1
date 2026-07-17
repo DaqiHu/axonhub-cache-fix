@@ -14,9 +14,19 @@ $RepoDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
 $axonPid = Get-ListeningProcessId -Port 8090
 $cachePid = Get-ListeningProcessId -Port 9801
+$cpaPid = Get-ListeningProcessId -Port 8317
 $cacheHealth = $null
+$cpaHealthy = $false
 if ($cachePid) {
   try { $cacheHealth = Invoke-RestMethod "http://127.0.0.1:9801/health" -TimeoutSec 3 } catch {}
+}
+if ($cpaPid) {
+  try {
+    $null = Invoke-RestMethod "http://127.0.0.1:8317/v1/models" -TimeoutSec 5 -Headers @{ "Authorization" = "Bearer cpa-local-key-2026" }
+    $cpaHealthy = $true
+  } catch {
+    $cpaHealthy = $false
+  }
 }
 
 $runtimeValid = $null
@@ -56,6 +66,11 @@ $result = [ordered]@{
       pid = $cachePid
       healthy = if ($cachePid) { Test-CacheFixHealthResponse -Response $cacheHealth } else { $false }
     }
+    cpa = [ordered]@{
+      running = [bool]$cpaPid
+      pid = $cpaPid
+      healthy = $cpaHealthy
+    }
   }
   storage = $storage
   logs = $logHealth
@@ -70,6 +85,7 @@ if ($Json) {
   Write-Host "`n=== Runtime Health ==="
   Write-Host "  AxonHub   :8090  $($(if($axonPid){"RUNNING pid=$axonPid"}else{"STOPPED"}))"
   Write-Host "  cache-fix :9801  $($(if($cachePid){"RUNNING pid=$cachePid healthy=$($result.services.cache_fix.healthy)"}else{"STOPPED"}))"
+  Write-Host "  CPA       :8317  $($(if($cpaPid){"RUNNING pid=$cpaPid healthy=$cpaHealthy"}else{"STOPPED"}))"
   if ($null -ne $runtimeValid) { Write-Host "  extensions       $($(if($runtimeValid){"VALID"}else{"INVALID"}))" }
   foreach ($entry in $storage.GetEnumerator()) {
     Write-Host ("  {0,-10} {1,10:N1} MiB  {2}" -f $entry.Key, ($entry.Value.Bytes / 1MB), $entry.Value.State)

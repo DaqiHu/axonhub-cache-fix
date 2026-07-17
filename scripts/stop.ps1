@@ -24,7 +24,8 @@ if ($supervisorPid) {
 
 foreach ($service in @(
   @{ Port = 9801; Name = "cache-fix proxy" },
-  @{ Port = 8090; Name = "AxonHub" }
+  @{ Port = 8090; Name = "AxonHub" },
+  @{ Port = 8317; Name = "CPA (CLIProxyAPI)" }
 )) {
   $processId = Get-ListeningProcessId -Port $service.Port
   if ($processId) {

@@ -234,6 +234,20 @@ function Wait-ManagedProcess {
   return $Process.ExitCode
 }
 
+function Get-CPAEnvironment {
+  param([string]$CpaDir)
+  return @{
+    CLI_PROXY_CONFIG_PATH = (Join-Path $CpaDir "config.yaml")
+  }
+}
+
+function Test-CPAHealthResponse {
+  param($StatusCode, $Body)
+  # CPA is healthy if it responds on its API port.
+  # /v1/models returns 200 when the proxy is ready.
+  return $StatusCode -eq 200
+}
+
 function Get-SupervisorProcessId {
   param([string]$ScriptPath)
   $target = [System.IO.Path]::GetFullPath($ScriptPath).ToLowerInvariant()

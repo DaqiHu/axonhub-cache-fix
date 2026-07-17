@@ -1,7 +1,9 @@
 param(
   [string]$Dir = "$env:USERPROFILE\axonhub",
   [int]$IntervalSeconds = 10,
-  [switch]$NoCacheFix
+  [switch]$NoCacheFix,
+  [switch]$NoCPA,
+  [string]$CPADir = "$env:USERPROFILE\cpa-proxy"
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,9 +42,10 @@ function Get-CacheFixEnvironment {
 }
 
 function Get-RotatableLogPaths {
-  param([string]$Dir)
+  param([string]$Dir, [string]$CpaDir)
   $logs = Join-Path $Dir "logs"
-  return @(
+  $cpaLogs = Join-Path $CpaDir "logs"
+  $axonPaths = @(
     "cache-fix-debug.log",
     "cache-fix-stderr.log",
     "cache-fix-stdout.log",
@@ -54,6 +57,11 @@ function Get-RotatableLogPaths {
     "upstream-errors.jsonl",
     "upstream-error-bodies.jsonl"
   ) | ForEach-Object { Join-Path $logs $_ }
+  $cpaPaths = @(
+    "cpa-stdout.log",
+    "cpa-stderr.log"
+  ) | ForEach-Object { Join-Path $cpaLogs $_ }
+  return @() + $axonPaths + $cpaPaths
 }
 
 function Test-CacheFixSupervisionAllowed {
@@ -95,11 +103,36 @@ function Start-CacheFixChild {
   return $process
 }
 
+function Start-CPAChild {
+  param([string]$CpaDir, [string]$EventLog)
+  $exe = Join-Path $CpaDir "cli-proxy-api.exe"
+  if (-not (Test-Path -LiteralPath $exe)) {
+    Write-RuntimeEvent -Path $EventLog -Event "start_failed" -Service "cpa" -Data @{ reason = "missing_executable" }
+    return $null
+  }
+  $configYaml = Join-Path $CpaDir "config.yaml"
+  if (-not (Test-Path -LiteralPath $configYaml)) {
+    Write-RuntimeEvent -Path $EventLog -Event "start_failed" -Service "cpa" -Data @{ reason = "missing_config" }
+    return $null
+  }
+  $stdout = Get-RedirectLogPath -Path (Join-Path $CpaDir "logs\cpa-stdout.log")
+  $stderr = Get-RedirectLogPath -Path (Join-Path $CpaDir "logs\cpa-stderr.log")
+  $process = Start-ManagedProcess `
+    -FilePath $exe `
+    -ArgumentList @("--config", $configYaml) `
+    -WorkingDirectory $CpaDir `
+    -StdoutPath $stdout `
+    -StderrPath $stderr `
+    -Hidden
+  Write-RuntimeEvent -Path $EventLog -Event "started" -Service "cpa" -Data @{ pid = $process.Id }
+  return $process
+}
+
 function Invoke-Supervisor {
-  param([string]$Dir, [int]$IntervalSeconds, [switch]$NoCacheFix)
+  param([string]$Dir, [int]$IntervalSeconds, [switch]$NoCacheFix, [switch]$NoCPA, [string]$CPADir)
   New-Item -ItemType Directory -Path (Join-Path $Dir "logs") -Force | Out-Null
   $eventLog = Join-Path $Dir "logs\supervisor.jsonl"
-  foreach ($path in (Get-RotatableLogPaths -Dir $Dir)) {
+  foreach ($path in (Get-RotatableLogPaths -Dir $Dir -CpaDir $CPADir)) {
     if ($path -like "*stdout.log" -or $path -like "*stderr.log") { continue }
     try { $null = Rotate-LogFile -Path $path } catch {}
   }
@@ -111,11 +144,15 @@ function Invoke-Supervisor {
 
   $axonProcess = $null
   $cacheProcess = $null
+  $cpaProcess = $null
   $axonAttempt = 0
   $cacheAttempt = 0
+  $cpaAttempt = 0
   $cacheHealthFailures = 0
+  $cpaHealthFailures = 0
   $nextAxonStart = [DateTime]::MinValue
   $nextCacheStart = [DateTime]::MinValue
+  $nextCPAStart = [DateTime]::MinValue
 
   try {
     while ($true) {
@@ -128,6 +165,11 @@ function Invoke-Supervisor {
         $cacheProcess.Refresh()
         Write-RuntimeEvent -Path $eventLog -Event "exited" -Service "cache-fix" -Data @{ pid = $cacheProcess.Id; exit_code = $cacheProcess.ExitCode }
         $cacheProcess = $null
+      }
+      if ($cpaProcess -and $cpaProcess.HasExited) {
+        $cpaProcess.Refresh()
+        Write-RuntimeEvent -Path $eventLog -Event "exited" -Service "cpa" -Data @{ pid = $cpaProcess.Id; exit_code = $cpaProcess.ExitCode }
+        $cpaProcess = $null
       }
 
       $axonPid = Get-ListeningProcessId -Port 8090
@@ -174,6 +216,37 @@ function Invoke-Supervisor {
       } elseif (-not $NoCacheFix) {
         $cacheHealthFailures = 0
       }
+
+      if (-not $NoCPA) {
+        $cpaPid = Get-ListeningProcessId -Port 8317
+        if ($cpaPid) {
+          try {
+            $cpaResponse = Invoke-RestMethod "http://127.0.0.1:8317/v1/models" -TimeoutSec 5 -Headers @{ "Authorization" = "Bearer cpa-local-key-2026" }
+            if (Test-CPAHealthResponse -StatusCode 200 -Body ($cpaResponse | ConvertTo-Json -Compress)) {
+              $cpaHealthFailures = 0
+              $cpaAttempt = 0
+            } else {
+              $cpaHealthFailures++
+            }
+          } catch { $cpaHealthFailures++ }
+          if ((Get-ServiceRecoveryDecision -ListeningProcessId $cpaPid -HealthFailures $cpaHealthFailures) -eq "restart") {
+            Write-RuntimeEvent -Path $eventLog -Event "health_restart" -Service "cpa" -Data @{ pid = $cpaPid; failures = $cpaHealthFailures }
+            Stop-Process -Id $cpaPid -Force -ErrorAction SilentlyContinue
+            $cpaHealthFailures = 0
+          }
+        } elseif ((Get-ServiceRecoveryDecision `
+            -ListeningProcessId $cpaPid `
+            -ManagedProcessRunning ([bool]($cpaProcess -and -not $cpaProcess.HasExited))) -eq "restart" `
+            -and [DateTime]::UtcNow -ge $nextCPAStart) {
+          try { $cpaProcess = Start-CPAChild -CpaDir $CPADir -EventLog $eventLog } catch {
+            Write-RuntimeEvent -Path $eventLog -Event "start_failed" -Service "cpa" -Data @{ reason = $_.Exception.Message }
+          }
+          $delay = Get-RestartDelaySeconds -Attempt $cpaAttempt
+          $cpaAttempt++
+          $nextCPAStart = [DateTime]::UtcNow.AddSeconds($delay)
+        }
+      }
+
       Start-Sleep -Seconds ([Math]::Max(1, $IntervalSeconds))
     }
   } finally {
@@ -184,5 +257,5 @@ function Invoke-Supervisor {
 }
 
 if ($MyInvocation.InvocationName -ne ".") {
-  Invoke-Supervisor -Dir $Dir -IntervalSeconds $IntervalSeconds -NoCacheFix:$NoCacheFix
+  Invoke-Supervisor -Dir $Dir -IntervalSeconds $IntervalSeconds -NoCacheFix:$NoCacheFix -NoCPA:$NoCPA -CPADir $CPADir
 }

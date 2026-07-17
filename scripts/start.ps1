@@ -3,7 +3,9 @@ param(
   [switch]$Status,
   [switch]$Once,
   [int]$StartupTimeoutSeconds = 180,
-  [string]$Dir = "$env:USERPROFILE\axonhub"
+  [string]$Dir = "$env:USERPROFILE\axonhub",
+  [switch]$NoCPA,
+  [string]$CPADir = "$env:USERPROFILE\cpa-proxy"
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,6 +34,9 @@ if ($Once) {
     }
     $null = Start-CacheFixChild -Dir $Dir -EventLog $eventLog
   }
+  if (-not $NoCPA -and -not (Get-ListeningProcessId -Port 8317)) {
+    $null = Start-CPAChild -CpaDir $CPADir -EventLog $eventLog
+  }
   Start-Sleep -Seconds 3
   & $HealthPath -Dir $Dir -AllowStopped:$NoCacheFix
   exit $LASTEXITCODE
@@ -48,9 +53,11 @@ if ($supervisorPid) {
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", "`"$SupervisorPath`"",
-    "-Dir", "`"$Dir`""
+    "-Dir", "`"$Dir`"",
+    "-CPADir", "`"$CPADir`""
   )
   if ($NoCacheFix) { $arguments += "-NoCacheFix" }
+  if ($NoCPA) { $arguments += "-NoCPA" }
   $process = Start-ManagedProcess `
     -FilePath $powershell `
     -ArgumentList $arguments `
@@ -71,6 +78,15 @@ do {
       $cacheReady = Test-CacheFixHealthResponse -Response $cacheHealth
     } catch {
       $cacheReady = $false
+    }
+  }
+  $cpaReady = [bool]$NoCPA
+  if (-not $NoCPA -and (Get-ListeningProcessId -Port 8317)) {
+    try {
+      $cpaHealth = Invoke-RestMethod "http://127.0.0.1:8317/v1/models" -TimeoutSec 5 -Headers @{ "Authorization" = "Bearer cpa-local-key-2026" }
+      $cpaReady = Test-CPAHealthResponse -StatusCode 200 -Body ($cpaHealth | ConvertTo-Json -Compress)
+    } catch {
+      $cpaReady = $false
     }
   }
   if ($axonReady -and $cacheReady) { break }
