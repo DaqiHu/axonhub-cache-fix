@@ -129,7 +129,7 @@ function Test-CacheFixHealthResponse {
 function Test-MaintenanceAllowed {
   param([int[]]$ListeningPorts)
   if (-not $PSBoundParameters.ContainsKey("ListeningPorts")) {
-    $ListeningPorts = @(8090, 9801 | Where-Object { Get-ListeningProcessId -Port $_ })
+    $ListeningPorts = @(8090, 19801 | Where-Object { Get-ListeningProcessId -Port $_ })
   }
   return @($ListeningPorts).Count -eq 0
 }

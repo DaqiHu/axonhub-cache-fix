@@ -13,9 +13,9 @@ if (-not (Test-Path -LiteralPath $db)) { throw "DB not found: $db" }
 if ($Vacuum -and -not $Execute) { throw "-Vacuum requires -Execute" }
 
 if ($Execute) {
-  $active = @(8090, 9801 | Where-Object { Get-ListeningProcessId -Port $_ })
+  $active = @(8090, 19801 | Where-Object { Get-ListeningProcessId -Port $_ })
   if (-not (Test-MaintenanceAllowed -ListeningPorts $active)) {
-    throw "Offline maintenance requires ports 8090 and 9801 to be stopped. Run scripts\stop.ps1 first."
+    throw "Offline maintenance requires ports 8090 and 19801 to be stopped. Run scripts\stop.ps1 first."
   }
 }
 

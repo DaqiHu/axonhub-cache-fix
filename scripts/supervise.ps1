@@ -38,6 +38,7 @@ function Get-CacheFixEnvironment {
     CACHE_FIX_LOW_CACHE_TRACE_THRESHOLD = "80"
     CACHE_FIX_LOW_CACHE_TRACE_RETENTION_DAYS = "7"
     CACHE_FIX_LOW_CACHE_TRACE_DIR = (Join-Path $logs "low-cache-requests")
+    CACHE_FIX_PROXY_PORT = "19801"
   }
 }
 
@@ -188,10 +189,10 @@ function Invoke-Supervisor {
       }
 
       if (-not $NoCacheFix -and (Test-CacheFixSupervisionAllowed -AxonHubListeningProcessId $axonPid)) {
-        $cachePid = Get-ListeningProcessId -Port 9801
+        $cachePid = Get-ListeningProcessId -Port 19801
         if ($cachePid) {
           try {
-            $health = Invoke-RestMethod "http://127.0.0.1:9801/health" -TimeoutSec 3
+            $health = Invoke-RestMethod "http://127.0.0.1:19801/health" -TimeoutSec 3
             if (Test-CacheFixHealthResponse -Response $health) { $cacheHealthFailures = 0 }
             else { $cacheHealthFailures++ }
           } catch { $cacheHealthFailures++ }

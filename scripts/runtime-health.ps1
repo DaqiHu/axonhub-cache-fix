@@ -13,12 +13,12 @@ $RepoDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 . "$RepoDir\scripts\runtime-common.ps1"
 
 $axonPid = Get-ListeningProcessId -Port 8090
-$cachePid = Get-ListeningProcessId -Port 9801
+$cachePid = Get-ListeningProcessId -Port 19801
 $cpaPid = Get-ListeningProcessId -Port 8317
 $cacheHealth = $null
 $cpaHealthy = $false
 if ($cachePid) {
-  try { $cacheHealth = Invoke-RestMethod "http://127.0.0.1:9801/health" -TimeoutSec 3 } catch {}
+  try { $cacheHealth = Invoke-RestMethod "http://127.0.0.1:19801/health" -TimeoutSec 3 } catch {}
 }
 if ($cpaPid) {
   try {
@@ -84,7 +84,7 @@ if ($Json) {
 } else {
   Write-Host "`n=== Runtime Health ==="
   Write-Host "  AxonHub   :8090  $($(if($axonPid){"RUNNING pid=$axonPid"}else{"STOPPED"}))"
-  Write-Host "  cache-fix :9801  $($(if($cachePid){"RUNNING pid=$cachePid healthy=$($result.services.cache_fix.healthy)"}else{"STOPPED"}))"
+  Write-Host "  cache-fix :19801  $($(if($cachePid){"RUNNING pid=$cachePid healthy=$($result.services.cache_fix.healthy)"}else{"STOPPED"}))"
   Write-Host "  CPA       :8317  $($(if($cpaPid){"RUNNING pid=$cpaPid healthy=$cpaHealthy"}else{"STOPPED"}))"
   if ($null -ne $runtimeValid) { Write-Host "  extensions       $($(if($runtimeValid){"VALID"}else{"INVALID"}))" }
   foreach ($entry in $storage.GetEnumerator()) {
