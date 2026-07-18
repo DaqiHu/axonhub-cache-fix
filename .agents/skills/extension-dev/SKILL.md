@@ -6,21 +6,21 @@ description: "Use when adding or modifying an axonhub-cache-fix extension after 
 # Extension Development
 
 An extension is justified only after the first changed prefix component is
-proven. Begin with:
+proven with project scripts:
 
 ```powershell
 python scripts/cache_report.py 60 --low-only
+python scripts/request_inspect.py <request-id> --compare-prev --neighbors 5
 python scripts/analyze.py --dir .\test-data "*Request_*.json"
 ```
 
-`appended-system` alone is not a fix target. Repository instructions,
-user/linter file-change notices, and background-task events are semantic input
-and must be preserved. Unknown formats fail open.
+`appended-system` alone is not a fix target. Skills listing, mid-turn user
+injection, repository instructions, file-change notices, and background-task
+events are semantic input and must be preserved. Unknown formats fail open.
 
 An upstream error is also not an extension candidate until request mutation is
 proven. Use `upstream-error-bodies.jsonl` and `supervisor.jsonl` to separate
-AxonHub/provider failures from proxy exits. `SQLITE_BUSY` belongs to AxonHub's
-SQLite layer.
+AxonHub/provider failures from proxy exits.
 
 ## Contract
 
@@ -33,12 +33,12 @@ keys, fail open, and never mutate the response body or status.
 
 Stateful extensions must:
 
-- key by session and agent; add model and request family when relevant;
-- isolate exact one-tool `web_search` workers;
-- preserve every `tool_use.id` / `tool_result.tool_use_id` pair;
-- never restore content across a changed tool ID;
-- never add, retain, or replace a tool definition absent from the current body;
-- include concurrent-agent and changed-tool-ID regression tests.
+- key by session and agent; add model and request family when relevant
+- isolate exact one-tool `web_search` workers
+- preserve every `tool_use.id` / `tool_result.tool_use_id` pair
+- never restore content across a changed tool ID
+- never add, retain, or replace a tool definition absent from the current body
+- include concurrent-agent and changed-tool-ID regression tests
 
 ## Order
 
@@ -61,9 +61,7 @@ Stateful extensions must:
 5. Verify `scripts/start.ps1 -Status` and a fresh E2E watermark run.
 6. Compare token-weighted uncached tokens, not average percentages.
 
-Use `scripts/template.mjs` for the skeleton and
-`references/patterns.md` for proven patterns. For Responses provider behavior,
-use
+Use `scripts/template.mjs` for the skeleton and `references/patterns.md` for
+proven patterns. For Responses provider behavior, use
 `python scripts/provider_report.py 30 --after-request-id <watermark> --expect-tool`
-only after a deliberate
-tool-required probe; it is read-only and must not send requests automatically.
+only after a deliberate tool-required probe.

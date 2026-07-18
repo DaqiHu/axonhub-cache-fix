@@ -7,6 +7,46 @@
   (default: `%APPDATA%/npm/node_modules/claude-code-cache-fix/`)
 - **Extensions runtime** under `~/axonhub/` (shared with AxonHub; `setup.ps1` populates it)
 
+## Analysis skills (mandatory routing)
+
+When analyzing AxonHub cache data, request IDs, low-hit rows, session diffs, E2E
+cache measurements, or extension mutations, **load and follow the matching
+project skill first**. Use the scripts those skills name. Do not invent disposable
+sqlite/python one-liners for work already covered by `scripts/`.
+
+| Situation | Skill | Primary scripts |
+|---|---|---|
+| Monitor hit rate / scan low-hit rows | `cache-hit-check` | `scripts/cache_report.py`, `scripts/request_inspect.py` |
+| Root-cause a miss or a named request ID | `cache-hit-debug` | `scripts/request_inspect.py`, `scripts/cache_report.py`, logs |
+| Diff adjacent requests / explain a transition | `session-analyze` | `scripts/request_inspect.py`, `scripts/analyze.py` |
+| Before/after E2E measurement | `e2e-cache-test` | watermark + `cache_report.py` + `request_inspect.py` |
+| Implement/fix an extension after proof | `extension-dev` | tests + `scripts/setup.ps1` + patterns.md |
+
+### Required first commands
+
+```powershell
+# Overview / classification
+python scripts/cache_report.py 60 --low-only
+python scripts/cache_report.py 60 --summary
+
+# One request ID or pair (preferred over ad-hoc DB scripts)
+python scripts/request_inspect.py 22412 --compare-prev --neighbors 5
+python scripts/request_inspect.py 24771 24772
+
+# Downloaded bodies only
+python scripts/analyze.py --dir .\test-data "*Request_*.json"
+```
+
+If a skill or script is missing a needed check, **extend that skill/script and
+add a regression test**. Temporary investigation snippets are fine only as a
+bridge to that permanent entry point.
+
+Reusable Python building blocks for new AxonHub DB checks:
+
+- `.agents/skills/session-analyze/references/db-snippets.md`
+- import helpers from `scripts/request_inspect.py` / `scripts/cache_report.py`
+  instead of re-deriving SQLite schema each time
+
 ## Architecture
 
 ```
@@ -112,9 +152,13 @@ the extension pipeline; AxonHub owns port 8090, provider routing, and SQLite.
 4. Save to `test-data/` directory
 
 ### Analyzing with Python
+
+Prefer project skills and scripts (see **Analysis skills** above).
+
 ```bash
-python scripts/analyze.py --dir ./test-data "*Request_*.json"
 python scripts/cache_report.py 60 --low-only
+python scripts/request_inspect.py 22412 --compare-prev --neighbors 5
+python scripts/analyze.py --dir ./test-data "*Request_*.json"
 ```
 
 Key diagnostics:
@@ -140,15 +184,21 @@ Key diagnostics:
 5. **Upstream error bodies** → `~/axonhub/logs/upstream-error-bodies.jsonl`:
    distinguishes AxonHub/provider failures from proxy lifecycle failures
 
-Start with the read-only classified reports:
+Start with the project skills and read-only reports:
 
 ```powershell
+# skill: cache-hit-check
 python scripts/cache_report.py 60 --low-only
 python scripts/cache_report.py 60 --summary
+
+# skill: cache-hit-debug / session-analyze
+python scripts/request_inspect.py <request-id> --compare-prev --neighbors 5
 ```
 
 `--summary` uses aggregate token SQL and does not scan request bodies. Prefer it
 for frequent health polling; `--low-only` loads bodies only for classification.
+`request_inspect.py` is the fixed entry point for a single request ID, adjacent
+hit-rate window, skills-listing position, and appended-system kind.
 
 Do not mix models or formats silently. The default filter is `deepseek%` plus
 `anthropic/messages`. Use `--all-models --all-formats` only for an explicit
@@ -162,7 +212,7 @@ cross-provider audit. Category summaries are token-weighted.
 | 13-26% hit on injection requests | Deferred-tools or task-tools system reminder | strip-empty-system |
 | ~82% hit after injection | prefix-hold restored most but some boundary change | prefix-hold (partial) |
 | 1-9% exactly when tools appear | Existing tools moved after full-array sort | tool-order-hold |
-| 0-10% with `appended-system` | Worktree instructions, file diff, or background-task event | Preserve; expected semantic growth |
+| 0-10% with `appended-system` | Skills listing, mid-turn user inject, worktree instructions, file diff, or background-task event | Preserve; expected semantic growth. Confirm with `request_inspect.py` before blaming skills listing |
 | lower hit with `large-growth` | Large tool result/skill text appended to exact prefix | Measure growth; usually expected |
 | 99.99% hit | Clean state | — |
 
@@ -179,11 +229,15 @@ approved bookkeeping prefixes, including their historical replay on later
 requests. Meaningful or unknown system content must be preserved even when
 that means a cache miss.
 
-Current meaningful examples include worktree `CLAUDE.md` / `AGENTS.md`
-contents, user/linter file-change notices with diffs, and
-`[SYSTEM NOTIFICATION - NOT USER INPUT]` background-task completion/failure
+Current meaningful examples include skills listing
+(`The following skills are available for use with the Skill tool:`), mid-turn
+user injection (`The user sent a new message while you were working:`), worktree
+`CLAUDE.md` / `AGENTS.md` contents, user/linter file-change notices with diffs,
+and `[SYSTEM NOTIFICATION - NOT USER INPUT]` background-task completion/failure
 events. They are classified as `appended-system`; do not broaden the strip
-allowlist to include them.
+allowlist to include them. A stable mid-history skills listing is not proof that
+skills listing caused the current miss—compare positions with
+`scripts/request_inspect.py`.
 
 ### Low-cache request archive
 
@@ -220,6 +274,8 @@ original request or response.
 - Empty system: `{role:"system", content:[]}`
 - Deferred-tools reminder: `{role:"system", content:"The following deferred tools are now available..."}`
 - System reminder: `{role:"system", content:"The task tools haven't been used recently..."}`
+- Skills listing: `{role:"system", content:"The following skills are available for use with the Skill tool:..."}`
+- Mid-turn user inject: `{role:"system", content:"The user sent a new message while you were working:..."}`
 - Worktree instructions: `{role:"system", content:"Contents of .../AGENTS.md: ..."}`
 - File-change notice: `{role:"system", content:"Note: ... was modified..."}`
 - Background event: `{role:"system", content:"[SYSTEM NOTIFICATION - NOT USER INPUT]..."}`
@@ -257,13 +313,17 @@ When a new cache drop pattern emerges:
    - Key terms: "prompt cache", "system reminder", "billing header", "context injection"
 2. **Search gists and forums**: GitHub Gist, Reddit r/ClaudeCode, Discord
 3. **Read Claude Code changelogs**: look for new system prompts, auto-injections, or context management changes
-4. **Classify first**: `python scripts/cache_report.py 60 --low-only`
-5. **Diff request bodies**: `python scripts/analyze.py --dir <dir>` on consecutive request IDs
-6. **Check DeepSeek API docs**: verify caching behavior hasn't changed on their side
-7. **Compare tool inventories and order**: verify definitions already present in
+4. **Classify first** (`cache-hit-check`): `python scripts/cache_report.py 60 --low-only`
+5. **Inspect the request ID** (`cache-hit-debug` / `session-analyze`):
+   `python scripts/request_inspect.py <id> --compare-prev --neighbors 5`
+6. **Diff downloaded bodies if needed**: `python scripts/analyze.py --dir <dir>`
+7. **Check DeepSeek API docs**: verify caching behavior hasn't changed on their side
+8. **Compare tool inventories and order**: verify definitions already present in
    request N retain their relative order in request N+1; list additions and removals
-8. **Check protocol pairing**: every assistant `tool_use.id` must have a following
+9. **Check protocol pairing**: every assistant `tool_use.id` must have a following
    user `tool_result.tool_use_id`; never repair cache by crossing those identities
+10. **If the skill/script cannot answer the question**: extend the skill/script and tests,
+    then re-run. Do not leave only a throwaway investigation script.
 
 When you find a community-reported but unfixed issue (like #64192),
 reference it in the extension code and in [`references/patterns.md`](.agents/skills/extension-dev/references/patterns.md).

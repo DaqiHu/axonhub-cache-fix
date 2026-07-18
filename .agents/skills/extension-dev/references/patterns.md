@@ -112,6 +112,9 @@ Exact one-tool `web_search` requests are separated from conversation traffic.
 
 **Appearance**: Claude Code appends a `role:"system"` message containing one of:
 
+- skills listing: `The following skills are available for use with the Skill tool:`;
+- mid-turn user injection: `The user sent a new message while you were working:`;
+- multi-agent notification: `Another Claude session sent a message while you were working:`;
 - worktree `CLAUDE.md` / `AGENTS.md` contents;
 - a user/linter file-change notice with the relevant diff;
 - `[SYSTEM NOTIFICATION - NOT USER INPUT]` background-task completion or failure.
@@ -119,10 +122,15 @@ Exact one-tool `web_search` requests are separated from conversation traffic.
 **Effect**: The old Anthropic and native messages can remain an exact prefix,
 but DeepSeek may reuse only older cache units while it constructs the new
 boundary. The first event request can be near 0%; the next stable request often
-recovers.
+recovers. Other providers can also drop to near-zero when the trailing system is
+new, even if a skills listing already existed earlier in history.
 
 **Policy**: These events affect the model's next action and must be preserved.
 They are classified as `appended-system`, not as a strip-extension failure.
+Do not broaden the strip allowlist to skills listing. Use
+`python scripts/request_inspect.py <id> --compare-prev` to distinguish a newly
+appended/moved skills listing from a stable listing plus a different trailing
+system (for example DeepSeek `#24772` vs Kimi `#22412`).
 Optimization belongs upstream: shorten injected repository instructions, avoid
 unnecessarily large change notices, and do not launch latency-sensitive followup
 requests immediately after a large append when the workflow permits waiting.
