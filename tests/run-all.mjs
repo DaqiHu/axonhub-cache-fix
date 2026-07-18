@@ -18,6 +18,7 @@ const tests = [
   ["node", "test-pipeline.mjs"],
   ["python", "test-cache-report.py"],
   ["python", "test-analyze.py"],
+  ["python", "test-request-inspect.py"],
   ["python", "test-provider-report.py"],
   ["python", "test-sqlite-maintenance.py"],
   ["python", "test-probe-docs.py"],
