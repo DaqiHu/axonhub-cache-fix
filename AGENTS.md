@@ -16,6 +16,7 @@ sqlite/python one-liners for work already covered by `scripts/`.
 
 | Situation | Skill | Primary scripts |
 |---|---|---|
+| Quick multi-channel dashboard / spot-check | `cache-health-check` | `scripts/cache_health_check.py` |
 | Monitor hit rate / scan low-hit rows | `cache-hit-check` | `scripts/cache_report.py`, `scripts/request_inspect.py` |
 | Root-cause a miss or a named request ID | `cache-hit-debug` | `scripts/request_inspect.py`, `scripts/cache_report.py`, logs |
 | Diff adjacent requests / explain a transition | `session-analyze` | `scripts/request_inspect.py`, `scripts/analyze.py` |
